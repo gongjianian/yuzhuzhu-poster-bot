@@ -1,94 +1,84 @@
-import os
 import json
+import os
 import re
+
+from dotenv import load_dotenv
+from loguru import logger
 from openai import OpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
+
 from models import QCResult
-from dotenv import load_dotenv
 
 load_dotenv()
 
-def _build_client():
+QC_PROMPT = """
+You are a quality control inspector for commercial product posters.
+
+You are given two images:
+1. The generated poster (first image)
+2. The original product photo (second image)
+
+Check the generated poster against these criteria and respond with JSON only:
+
+{"passed": true/false, "issues": ["issue1", "issue2"], "confidence": 0.0-1.0}
+
+Criteria (ALL must pass for passed=true):
+1. Product is clearly visible and is the focal point
+2. Product shape and packaging are not distorted or redesigned
+3. Brand colors are approximately preserved
+4. Text in the poster is not cropped or illegible
+5. No hallucinated extra products appear
+6. Logo/brand elements are not obscured
+
+Be strict. If any criterion fails, set passed=false and list all issues.
+"""
+
+
+def _build_client() -> OpenAI:
     return OpenAI(
-        api_key=os.environ.get("OPENAI_API_KEY", "dummy"),
-        base_url=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        api_key=os.getenv("GEMINI_API_KEY"),
+        base_url=os.getenv("GEMINI_API_BASE", "https://api.buxianliang.fun/v1"),
     )
 
-def _extract_code_block(text, language=""):
-    pattern = rf"```{language}(.*?)```"
-    match = re.search(pattern, text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    pattern = r"```(.*?)```"
-    match = re.search(pattern, text, re.DOTALL)
-    if match:
-        content = match.group(1).strip()
-        if content.startswith(language):
-            content = content[len(language):].strip()
-        return content
-    return text.strip()
 
-@retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=2, max=10), reraise=False)
-def perform_multimodal_qc(poster_base64: str, original_product_base64: str) -> QCResult:
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_exponential(multiplier=1, min=3, max=15),
+    reraise=True,
+)
+def check_poster_quality(poster_b64: str, product_b64: str) -> QCResult:
+    """
+    Use multimodal model to verify poster quality.
+    poster_b64: base64-encoded JPEG of generated poster
+    product_b64: base64-encoded PNG of original product (pre-processed)
+    """
     try:
         client = _build_client()
-        
-        system_prompt = """You are a highly capable AI specialized in multimodal quality control for advertising posters.
-You will be provided with an advertising poster image and the original product image.
-Your task is to inspect the poster for the following quality issues:
-1. Product Visibility: Is the product clearly visible?
-2. Shape Distortion: Is the product's shape deformed compared to the original?
-3. Brand Colors: Are the original product/brand colors preserved?
-4. Text Cropping: Is any text cut off or incomplete?
-5. Hallucination: Are there extra, unprompted products in the poster?
-6. Logo Obscurity: Is the brand logo obscured or missing?
+        model = os.getenv("GEMINI_COPY_MODEL", "gemini-3.1-pro-preview")
 
-Output a strict JSON describing the result:
-{
-    "passed": true or false,
-    "issues": ["list of specific issues if any, empty if none"],
-    "confidence": 0.0 to 1.0
-}"""
-        
         response = client.chat.completions.create(
-            model="gemini-3.1-pro-preview",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Original Product Image:"},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{original_product_base64}"
-                            }
-                        },
-                        {"type": "text", "text": "Generated Poster Image:"},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{poster_base64}"
-                            }
-                        }
-                    ]
-                }
-            ],
-            temperature=0.1
+            model=model,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{poster_b64}"}},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{product_b64}"}},
+                    {"type": "text", "text": QC_PROMPT},
+                ],
+            }],
+            temperature=0.1,
         )
-        
+
         content = response.choices[0].message.content
-        json_str = _extract_code_block(content, "json")
-        
+        clean = re.sub(r"```json|```", "", content).strip()
+
         try:
-            result_data = json.loads(json_str)
-        except json.JSONDecodeError:
-            result_data = json.loads(content.strip())
-            
-        return QCResult(**result_data)
-        
+            data = json.loads(clean)
+            return QCResult(**data)
+        except (json.JSONDecodeError, Exception):
+            logger.warning(f"QC model returned invalid JSON: {content[:200]}")
+            return QCResult(passed=True, issues=["QC model returned invalid JSON"], confidence=0.5)
+
     except Exception as e:
-        # If model returns invalid JSON or API fails after 2 retries,
-        # default to passed=True to avoid blocking the pipeline as requested.
-        print(f"QC check failed with error: {e}. Defaulting to passed=True.")
+        logger.error(f"QC check failed: {e}. Defaulting to passed=True.")
         return QCResult(passed=True, issues=[f"QC system failure: {str(e)}"], confidence=0.0)

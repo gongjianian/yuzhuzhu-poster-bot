@@ -2,92 +2,87 @@ import json
 import os
 import re
 from pathlib import Path
+
 from dotenv import load_dotenv
 from openai import OpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
+
 from models import ProductRecord, PosterScheme
 
 load_dotenv()
+
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 STORE_NAME = os.getenv("STORE_NAME", "浴小主")
 
-def _load_prompt(filename):
-    with open(PROMPTS_DIR / filename, "r", encoding="utf-8") as f:
-        return f.read()
 
-def _build_client():
+def _load_prompt(filename: str) -> str:
+    return (PROMPTS_DIR / filename).read_text(encoding="utf-8")
+
+
+def _build_client() -> OpenAI:
     return OpenAI(
-        api_key=os.environ.get("OPENAI_API_KEY", "dummy"),
-        base_url=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        api_key=os.getenv("GEMINI_API_KEY"),
+        base_url=os.getenv("GEMINI_API_BASE", "https://api.buxianliang.fun/v1"),
     )
 
-def _extract_code_block(text, language=""):
-    pattern = rf"```{language}(.*?)```"
-    match = re.search(pattern, text, re.DOTALL)
+
+def _extract_code_block(text: str) -> str:
+    """Extract content between first ``` and last ```."""
+    match = re.search(r"```(?:\w*)\s*\n?(.*?)\n?```", text, re.DOTALL)
     if match:
         return match.group(1).strip()
-    # Fallback to general code block if language specific fails
-    pattern = r"```(.*?)```"
-    match = re.search(pattern, text, re.DOTALL)
-    if match:
-        content = match.group(1).strip()
-        # Remove language identifier if it accidentally got captured at the start
-        if content.startswith(language):
-            content = content[len(language):].strip()
-        return content
     return text.strip()
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=30), reraise=True)
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=30),
+    reraise=True,
+)
 def generate_poster_content(record: ProductRecord) -> PosterScheme:
     client = _build_client()
-    scheme_prompt_template = _load_prompt("scheme_prompt.txt")
-    
-    # Phase 1: Scheme Generation
-    # Mock some data for the prompt as they are not all in ProductRecord directly
-    selling_points = record.benefits if record.benefits else "好用实惠"
-    idea = "结合宝妈日常场景"
-    
-    scheme_prompt = scheme_prompt_template.format(
+    model = os.getenv("GEMINI_COPY_MODEL", "gemini-3.1-pro-preview")
+
+    # --- Stage 1: Generate scheme ---
+    scheme_template = _load_prompt("scheme_prompt.txt")
+    selling_points = f"{record.benefits}；成分：{record.ingredients}"
+
+    scheme_prompt = scheme_template.format(
         product_name=record.product_name,
         selling_points=selling_points,
-        idea=idea,
+        idea=record.xiaohongshu_topics or "（无特定话题，请自主发散）",
         visual_style=record.visual_style,
-        brand_colors=record.brand_colors
+        brand_colors=record.brand_colors,
     )
-    
-    response_phase1 = client.chat.completions.create(
-        model="gemini-3.1-pro-preview",
+
+    stage1_resp = client.chat.completions.create(
+        model=model,
         messages=[{"role": "user", "content": scheme_prompt}],
-        temperature=0.7
+        temperature=0.8,
     )
-    
-    content1 = response_phase1.choices[0].message.content
-    json_str = _extract_code_block(content1, "json")
-    
+    stage1_content = stage1_resp.choices[0].message.content
+
     try:
-        scheme_data = json.loads(json_str)
+        clean = re.sub(r"```json|```", "", stage1_content).strip()
+        scheme_data = json.loads(clean)
     except json.JSONDecodeError as e:
-        # If fallback extract failed, try parsing raw content directly
-        try:
-            # Often models return raw JSON without markdown
-            scheme_data = json.loads(content1.strip())
-        except json.JSONDecodeError:
-            raise ValueError(f"Failed to parse JSON from response: {content1}") from e
+        raise ValueError(f"Stage 1 JSON parse error: {e}\nResponse: {stage1_content[:300]}")
 
-    # Add missing fields to scheme_data
-    scene_desc = scheme_data.pop("scene_description", "A scene")
-    layout_desc = scheme_data.pop("layout_description", "A layout")
+    # Extract scene/layout before passing to PosterScheme (not part of its schema)
+    scene_desc = scheme_data.pop("scene_description", "")
+    layout_desc = scheme_data.pop("layout_description", "")
 
-    
-    # Phase 2: Image Prompt Generation
-    image_prompt_template = _load_prompt("image_prompt.txt")
-    body_copy_formatted = " ".join(scheme_data.get("body_copy", []))
-    
-    image_prompt = image_prompt_template.format(
+    # --- Stage 2: Generate image prompt ---
+    body_copy_formatted = "\n".join(
+        f'  - "{line}"' for line in scheme_data.get("body_copy", [])
+    )
+
+    image_template = _load_prompt("image_prompt.txt")
+    image_prompt_filled = image_template.format(
         store_name=STORE_NAME,
-        size="1024x1024", # Default size or map from aspect_ratio
+        size="3:4",
         selling_points=selling_points,
-        selected_scheme=scheme_data.get("scheme_name", "Scheme"),
+        selected_scheme=json.dumps(scheme_data, ensure_ascii=False),
         product_name=record.product_name,
         headline=scheme_data.get("headline", ""),
         subheadline=scheme_data.get("subheadline", ""),
@@ -95,18 +90,23 @@ def generate_poster_content(record: ProductRecord) -> PosterScheme:
         cta=scheme_data.get("cta", ""),
         scene_description=scene_desc,
         layout_description=layout_desc,
-        visual_style=scheme_data.get("visual_style", record.visual_style)
+        visual_style=scheme_data.get("visual_style", record.visual_style),
     )
-    
-    response_phase2 = client.chat.completions.create(
-        model="gemini-3.1-pro-preview",
-        messages=[{"role": "user", "content": image_prompt}],
-        temperature=0.7
+
+    stage2_resp = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": image_prompt_filled}],
+        temperature=0.7,
     )
-    
-    content2 = response_phase2.choices[0].message.content
-    final_image_prompt = _extract_code_block(content2)
-    
-    scheme_data["image_prompt"] = final_image_prompt
-    
-    return PosterScheme(**scheme_data)
+    image_prompt = _extract_code_block(stage2_resp.choices[0].message.content)
+
+    return PosterScheme(
+        scheme_name=scheme_data.get("scheme_name", "方案A"),
+        visual_style=scheme_data.get("visual_style", record.visual_style),
+        headline=scheme_data.get("headline", ""),
+        subheadline=scheme_data.get("subheadline", ""),
+        body_copy=scheme_data.get("body_copy", []),
+        cta=scheme_data.get("cta", ""),
+        image_prompt=image_prompt,
+        aspect_ratio="3:4",
+    )

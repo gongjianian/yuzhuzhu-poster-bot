@@ -1,68 +1,62 @@
-import unittest
+import json
+import base64
+import pytest
 from unittest.mock import patch, MagicMock
 from models import QCResult
-from qc_checker import perform_multimodal_qc
-import json
+from qc_checker import check_poster_quality
 
-class TestQCChecker(unittest.TestCase):
-    
-    @patch("qc_checker._build_client")
-    def test_qc_passes(self, mock_build_client):
-        # Mocking OpenAI Client
-        mock_client = MagicMock()
-        mock_build_client.return_value = mock_client
-        
-        # Mock response returning success JSON
-        mock_response = MagicMock()
-        mock_response.choices = [
-            MagicMock(message=MagicMock(content="```json\n{\"passed\": true, \"issues\": [], \"confidence\": 0.95}\n```"))
-        ]
-        mock_client.chat.completions.create.return_value = mock_response
-        
-        result = perform_multimodal_qc("dummy_base64_poster", "dummy_base64_product")
-        
-        self.assertTrue(result.passed)
-        self.assertEqual(len(result.issues), 0)
-        self.assertGreater(result.confidence, 0.9)
-        
-    @patch("qc_checker._build_client")
-    def test_qc_fails_with_issues(self, mock_build_client):
-        # Mocking OpenAI Client
-        mock_client = MagicMock()
-        mock_build_client.return_value = mock_client
-        
-        # Mock response returning failure JSON
-        mock_response = MagicMock()
-        mock_response.choices = [
-            MagicMock(message=MagicMock(content="```json\n{\"passed\": false, \"issues\": [\"Product is deformed\", \"Brand logo obscured\"], \"confidence\": 0.88}\n```"))
-        ]
-        mock_client.chat.completions.create.return_value = mock_response
-        
-        result = perform_multimodal_qc("dummy_base64_poster", "dummy_base64_product")
-        
-        self.assertFalse(result.passed)
-        self.assertEqual(len(result.issues), 2)
-        self.assertIn("Product is deformed", result.issues)
-        
-    @patch("qc_checker._build_client")
-    def test_qc_handles_invalid_json(self, mock_build_client):
-        # Mocking OpenAI Client
-        mock_client = MagicMock()
-        mock_build_client.return_value = mock_client
-        
-        # Mock response returning completely invalid output
-        mock_response = MagicMock()
-        mock_response.choices = [
-            MagicMock(message=MagicMock(content="This is not json at all. I am an AI that refuses to output JSON."))
-        ]
-        mock_client.chat.completions.create.return_value = mock_response
-        
-        result = perform_multimodal_qc("dummy_base64_poster", "dummy_base64_product")
-        
-        # As per requirements, if it fails, default passed=True to avoid blocking pipeline
-        self.assertTrue(result.passed)
-        self.assertGreater(len(result.issues), 0)
-        self.assertEqual(result.confidence, 0.0)
 
-if __name__ == '__main__':
-    unittest.main()
+FAKE_B64 = base64.b64encode(b"fake").decode()
+
+
+def _mock_qc_response(passed: bool, issues: list, confidence: float = 0.9):
+    msg = MagicMock()
+    msg.content = json.dumps({"passed": passed, "issues": issues, "confidence": confidence})
+    choice = MagicMock()
+    choice.message = msg
+    resp = MagicMock()
+    resp.choices = [choice]
+    return resp
+
+
+@patch("qc_checker._build_client")
+def test_qc_passes(mock_build):
+    mock_client = MagicMock()
+    mock_build.return_value = mock_client
+    mock_client.chat.completions.create.return_value = _mock_qc_response(True, [])
+
+    result = check_poster_quality(FAKE_B64, FAKE_B64)
+    assert result.passed is True
+    assert result.issues == []
+
+
+@patch("qc_checker._build_client")
+def test_qc_fails_with_issues(mock_build):
+    mock_client = MagicMock()
+    mock_build.return_value = mock_client
+    mock_client.chat.completions.create.return_value = _mock_qc_response(
+        False, ["product distorted", "logo missing"]
+    )
+
+    result = check_poster_quality(FAKE_B64, FAKE_B64)
+    assert result.passed is False
+    assert len(result.issues) == 2
+
+
+@patch("qc_checker._build_client")
+def test_qc_handles_invalid_json(mock_build):
+    mock_client = MagicMock()
+    mock_build.return_value = mock_client
+
+    msg = MagicMock()
+    msg.content = "This is not valid JSON at all."
+    choice = MagicMock()
+    choice.message = msg
+    resp = MagicMock()
+    resp.choices = [choice]
+    mock_client.chat.completions.create.return_value = resp
+
+    result = check_poster_quality(FAKE_B64, FAKE_B64)
+    # Defaults to passed=True to avoid blocking pipeline
+    assert result.passed is True
+    assert len(result.issues) > 0

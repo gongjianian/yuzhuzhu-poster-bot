@@ -1,67 +1,79 @@
-import unittest
-from unittest.mock import patch, MagicMock
-from models import ProductRecord
-from content_generator import generate_poster_content
 import json
+import pytest
+from unittest.mock import patch, MagicMock
+from models import ProductRecord, PosterScheme
+from content_generator import generate_poster_content
 
-class TestContentGenerator(unittest.TestCase):
-    @patch("content_generator._build_client")
-    def test_generate_poster_content_returns_scheme(self, mock_build_client):
-        # Mocking OpenAI Client
-        mock_client = MagicMock()
-        mock_build_client.return_value = mock_client
-        
-        # Mock responses
-        mock_response_phase1 = MagicMock()
-        mock_response_phase1.choices = [
-            MagicMock(message=MagicMock(content="```json\n{\"scheme_name\": \"test_scheme\", \"visual_style\": \"test_style\", \"headline\": \"test_headline\", \"subheadline\": \"test_sub\", \"body_copy\": [\"test1\", \"test2\"], \"cta\": \"test_cta\", \"scene_description\": \"test_scene\", \"layout_description\": \"test_layout\"}\n```"))
-        ]
-        
-        mock_response_phase2 = MagicMock()
-        mock_response_phase2.choices = [
-            MagicMock(message=MagicMock(content="```\n8k resolution, masterpiece\n```"))
-        ]
-        
-        # Sequentially return responses for the two API calls
-        mock_client.chat.completions.create.side_effect = [mock_response_phase1, mock_response_phase2]
-        
-        record = ProductRecord(
-            record_id="123",
-            product_name="婴儿洗发水",
-            benefits="温和无泪",
-            visual_style="清新自然",
-            brand_colors="#AABBCC"
-        )
-        
-        scheme = generate_poster_content(record)
-        
-        self.assertEqual(scheme.scheme_name, "test_scheme")
-        self.assertEqual(scheme.headline, "test_headline")
-        self.assertEqual(scheme.image_prompt, "8k resolution, masterpiece")
 
-    @patch("content_generator._build_client")
-    def test_generate_poster_content_invalid_json_raises(self, mock_build_client):
-        # Mocking OpenAI Client
-        mock_client = MagicMock()
-        mock_build_client.return_value = mock_client
-        
-        # Return invalid JSON
-        mock_response_phase1 = MagicMock()
-        mock_response_phase1.choices = [
-            MagicMock(message=MagicMock(content="```json\n{invalid_json}\n```"))
-        ]
-        
-        mock_client.chat.completions.create.return_value = mock_response_phase1
-        
-        record = ProductRecord(
-            record_id="123",
-            product_name="婴儿洗发水",
-        )
-        
-        # Should raise ValueError ultimately
-        with self.assertRaises(ValueError):
-            # Because of retry, it will attempt 3 times and then reraise the original error
-            generate_poster_content(record)
+def _make_record():
+    return ProductRecord(
+        record_id="rec001",
+        product_name="玻尿酸精华液",
+        ingredients="透明质酸钠",
+        benefits="深层补水，锁水保湿",
+        xiaohongshu_topics="秋冬护肤",
+        visual_style="极简扁平",
+        brand_colors="#FFFFFF",
+        asset_filename="product_a.png",
+    )
 
-if __name__ == '__main__':
-    unittest.main()
+
+def _mock_scheme_response():
+    return json.dumps({
+        "scheme_name": "方案A - 痛点共鸣型",
+        "visual_style": "极简莫兰迪",
+        "headline": "告别干燥，喝饱的肌肤",
+        "subheadline": "透明质酸钠深层渗透，28天见证蜕变",
+        "body_copy": ["深层补水", "锁水保湿", "温和不刺激"],
+        "cta": "立即体验",
+        "scene_description": "极简白色背景，产品居中",
+        "layout_description": "标题居上，产品居中，文案居下",
+    })
+
+
+@patch("content_generator._build_client")
+def test_generate_poster_content_returns_scheme(mock_build):
+    mock_client = MagicMock()
+    mock_build.return_value = mock_client
+
+    # Stage 1 mock: scheme JSON
+    stage1_msg = MagicMock()
+    stage1_msg.content = _mock_scheme_response()
+    stage1_choice = MagicMock()
+    stage1_choice.message = stage1_msg
+    stage1_resp = MagicMock()
+    stage1_resp.choices = [stage1_choice]
+
+    # Stage 2 mock: image prompt in code block
+    stage2_msg = MagicMock()
+    stage2_msg.content = "```\nGenerate a minimalist poster with product...\n```"
+    stage2_choice = MagicMock()
+    stage2_choice.message = stage2_msg
+    stage2_resp = MagicMock()
+    stage2_resp.choices = [stage2_choice]
+
+    mock_client.chat.completions.create.side_effect = [stage1_resp, stage2_resp]
+
+    scheme = generate_poster_content(_make_record())
+
+    assert isinstance(scheme, PosterScheme)
+    assert scheme.headline == "告别干燥，喝饱的肌肤"
+    assert "minimalist poster" in scheme.image_prompt
+    assert mock_client.chat.completions.create.call_count == 2
+
+
+@patch("content_generator._build_client")
+def test_generate_poster_content_invalid_json_raises(mock_build):
+    mock_client = MagicMock()
+    mock_build.return_value = mock_client
+
+    bad_msg = MagicMock()
+    bad_msg.content = "这不是有效的JSON输出"
+    bad_choice = MagicMock()
+    bad_choice.message = bad_msg
+    bad_resp = MagicMock()
+    bad_resp.choices = [bad_choice]
+    mock_client.chat.completions.create.return_value = bad_resp
+
+    with pytest.raises(ValueError, match="Stage 1 JSON parse error"):
+        generate_poster_content(_make_record())

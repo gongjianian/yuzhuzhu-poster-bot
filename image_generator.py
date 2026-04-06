@@ -86,7 +86,7 @@ def _extract_image_bytes(response: Any) -> bytes:
     raise ValueError("No image content found in model response")
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8), reraise=True)
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=5, max=60), reraise=True)
 def generate_poster_image(image_prompt: str, product_image_b64: str) -> bytes:
     client = _build_client()
     model = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3-pro-image-preview")

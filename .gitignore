@@ -16,3 +16,4 @@ venv/
 *.pem
 *.key
 /tmp/poster_bot*
+.ccb/
