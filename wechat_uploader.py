@@ -51,23 +51,28 @@ def upload_image(image_bytes: bytes, cloud_path: str) -> str:
     if payload.get("errcode", 0) != 0:
         raise RuntimeError(f"Failed to get upload credentials: {payload}")
 
+    required_fields = ["url", "authorization", "token", "cos_file_id", "file_id"]
+    missing_fields = [field for field in required_fields if not payload.get(field)]
+    if missing_fields:
+        raise RuntimeError(f"Upload credential response missing fields {missing_fields}: {payload}")
+
     upload_url = payload["url"]
-    form_data = payload["authorization"]
-    form_data["key"] = payload["cos_file_id"]
-    form_data["Signature"] = payload["token"]
 
     upload_response = requests.post(
         upload_url,
-        data=form_data,
+        data={
+            "key": cloud_path,
+            "Signature": payload["authorization"],
+            "x-cos-security-token": payload["token"],
+            "x-cos-meta-fileid": payload["cos_file_id"],
+        },
         files={"file": ("poster.jpg", image_bytes, "image/jpeg")},
         timeout=60,
     )
-    upload_response.raise_for_status()
+    if upload_response.status_code not in (200, 201, 204):
+        raise RuntimeError(f"COS upload failed: HTTP {upload_response.status_code}")
 
-    file_id = payload.get("file_id")
-    if not file_id:
-        raise RuntimeError(f"Upload succeeded but file_id missing: {payload}")
-    return file_id
+    return payload["file_id"]
 
 
 def build_cloud_path(category: str, product_name: str) -> str:

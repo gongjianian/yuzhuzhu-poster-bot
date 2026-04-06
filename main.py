@@ -23,15 +23,20 @@ load_dotenv()
 
 
 LOCK_PATH = Path("/tmp/poster_bot.lock")
+MAX_QC_RETRIES = 2
 
 
 def setup_logging() -> None:
+    import sys
     Path("logs").mkdir(parents=True, exist_ok=True)
     logger.remove()
+    logger.add(sys.stderr, level="INFO")
     logger.add(
         "logs/poster_bot_{time:YYYY-MM-DD}.log",
         rotation="00:00",
+        retention="30 days",
         encoding="utf-8",
+        level="DEBUG",
     )
 
 
@@ -60,12 +65,15 @@ def send_feishu_alert(message: str) -> None:
         logger.warning("FEISHU_WEBHOOK_URL is not configured")
         return
 
-    response = requests.post(
-        webhook_url,
-        json={"msg_type": "text", "content": {"text": message}},
-        timeout=30,
-    )
-    response.raise_for_status()
+    try:
+        response = requests.post(
+            webhook_url,
+            json={"msg_type": "text", "content": {"text": message}},
+            timeout=30,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        logger.error("Failed to send Feishu alert: {}", exc)
 
 
 async def process_product(record) -> Optional[str]:
@@ -87,38 +95,54 @@ async def process_product(record) -> Optional[str]:
     asset_path = asset_dir / record.asset_filename
 
     try:
-        product_b64 = await asyncio.to_thread(process_product_image, str(asset_path))
+        # Step A: Generate copy & image prompt
         poster_scheme = await asyncio.to_thread(generate_poster_content, record)
-        poster_bytes = await asyncio.to_thread(
-            generate_poster_image,
-            poster_scheme.image_prompt,
-            product_b64,
-        )
-        poster_b64 = base64.b64encode(poster_bytes).decode("utf-8")
-        qc_result = await asyncio.to_thread(check_poster_quality, poster_b64, product_b64)
+        await asyncio.to_thread(update_record_status, record.record_id, "COPY_OK")
+        logger.info("{}: content generated — {}", record.product_name, poster_scheme.headline)
 
-        if not qc_result.passed:
-            issues = "; ".join(qc_result.issues) or "QC validation failed"
-            await asyncio.to_thread(
-                update_record_status,
-                record.record_id,
-                "FAILED_MANUAL",
-                error_msg=issues,
-            )
-            await asyncio.to_thread(
-                send_feishu_alert,
-                f"Poster QC failed for {record.product_name}: {issues}",
-            )
-            return None
+        # Step B: Preprocess product image
+        product_b64 = await asyncio.to_thread(process_product_image, str(asset_path))
 
+        # Step C+D: Generate poster with QC retry loop
+        poster_bytes = None
+        qc_prompt_suffix = ""
+        for attempt in range(MAX_QC_RETRIES + 1):
+            poster_bytes = await asyncio.to_thread(
+                generate_poster_image,
+                poster_scheme.image_prompt + qc_prompt_suffix,
+                product_b64,
+            )
+            await asyncio.to_thread(update_record_status, record.record_id, "IMAGE_OK")
+
+            poster_b64 = base64.b64encode(poster_bytes).decode("utf-8")
+            qc_result = await asyncio.to_thread(check_poster_quality, poster_b64, product_b64)
+
+            if qc_result.passed:
+                logger.info("{}: QC passed (confidence={})", record.product_name, qc_result.confidence)
+                break
+
+            logger.warning("{}: QC failed attempt {}: {}", record.product_name, attempt + 1, qc_result.issues)
+            if attempt < MAX_QC_RETRIES:
+                issues_str = "; ".join(qc_result.issues)
+                qc_prompt_suffix = f"\n\nPREVIOUS ATTEMPT FAILED QC. Fix: {issues_str}. Strictly preserve the product."
+            else:
+                await asyncio.to_thread(
+                    update_record_status, record.record_id, "FAILED_MANUAL",
+                    error_msg=f"QC failed after {MAX_QC_RETRIES + 1} attempts: {qc_result.issues}",
+                )
+                await asyncio.to_thread(
+                    send_feishu_alert,
+                    f"{record.product_name}: QC 失败 {MAX_QC_RETRIES + 1} 次: {qc_result.issues}",
+                )
+                return None
+
+        # Step E: Upload to WeChat cloud storage
         cloud_path = build_cloud_path(record.category, record.product_name)
         file_id = await asyncio.to_thread(upload_image, poster_bytes, cloud_path)
-        await asyncio.to_thread(
-            update_record_status,
-            record.record_id,
-            "DONE",
-            file_id=file_id,
-        )
+        logger.info("{}: uploaded → {}", record.product_name, file_id)
+        await asyncio.to_thread(update_record_status, record.record_id, "UPLOAD_OK", file_id=file_id)
+        await asyncio.to_thread(update_record_status, record.record_id, "DONE", file_id=file_id)
+        logger.success("{}: DONE", record.product_name)
         return file_id
     except Exception as exc:
         error_message = str(exc)

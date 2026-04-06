@@ -1,5 +1,4 @@
-from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
 
@@ -42,80 +41,125 @@ def test_send_feishu_alert(mock_post: Mock, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+@patch("main.logger")
 @patch("main.send_feishu_alert")
 @patch("main.update_record_status")
 @patch("main.upload_image", return_value="cloud://file-id")
-@patch("main.build_cloud_path", return_value="images/泡澡球/产品_20260406.jpg")
-@patch("main.check_poster_quality", return_value=QCResult(passed=True))
+@patch("main.build_cloud_path", return_value="images/posters/product_20260406.jpg")
+@patch("main.check_poster_quality", return_value=QCResult(passed=True, confidence=0.98))
 @patch("main.generate_poster_image", return_value=b"poster-bytes")
-@patch("main.generate_poster_content")
 @patch("main.process_product_image", return_value="product-b64")
+@patch("main.generate_poster_content")
 async def test_process_product_success(
-    mock_process_product_image: Mock,
     mock_generate_poster_content: Mock,
+    mock_process_product_image: Mock,
     mock_generate_poster_image: Mock,
     mock_check_poster_quality: Mock,
     mock_build_cloud_path: Mock,
     mock_upload_image: Mock,
     mock_update_record_status: Mock,
     mock_send_feishu_alert: Mock,
+    mock_logger: Mock,
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("ASSETS_DIR", "./assets/products")
-    mock_generate_poster_content.return_value = Mock(image_prompt="make poster")
+    mock_generate_poster_content.return_value = Mock(
+        image_prompt="make poster",
+        headline="Clean headline",
+    )
     record = ProductRecord(
         record_id="rec_1",
-        product_name="浴小主泡澡球",
-        category="泡澡球",
+        product_name="Bath Ball",
+        category="bath-bombs",
         asset_filename="product.png",
     )
 
     result = await main.process_product(record)
 
     assert result == "cloud://file-id"
-    mock_process_product_image.assert_called_once()
     mock_generate_poster_content.assert_called_once_with(record)
+    mock_process_product_image.assert_called_once()
     mock_generate_poster_image.assert_called_once_with("make poster", "product-b64")
-    mock_check_poster_quality.assert_called_once()
-    mock_upload_image.assert_called_once_with(b"poster-bytes", "images/泡澡球/产品_20260406.jpg")
-    mock_update_record_status.assert_called_once_with("rec_1", "DONE", file_id="cloud://file-id")
+    mock_check_poster_quality.assert_called_once_with("cG9zdGVyLWJ5dGVz", "product-b64")
+    mock_upload_image.assert_called_once_with(b"poster-bytes", "images/posters/product_20260406.jpg")
+    mock_update_record_status.assert_has_calls(
+        [
+            call("rec_1", "COPY_OK"),
+            call("rec_1", "IMAGE_OK"),
+            call("rec_1", "UPLOAD_OK", file_id="cloud://file-id"),
+            call("rec_1", "DONE", file_id="cloud://file-id"),
+        ]
+    )
+    assert mock_update_record_status.call_count == 4
     mock_send_feishu_alert.assert_not_called()
+    mock_logger.info.assert_called()
+    mock_logger.success.assert_called_once()
+    mock_build_cloud_path.assert_called_once_with("bath-bombs", "Bath Ball")
 
 
 @pytest.mark.asyncio
+@patch("main.logger")
 @patch("main.send_feishu_alert")
 @patch("main.update_record_status")
-@patch("main.check_poster_quality", return_value=QCResult(passed=False, issues=["Logo mismatch"]))
+@patch("main.check_poster_quality")
 @patch("main.generate_poster_image", return_value=b"poster-bytes")
-@patch("main.generate_poster_content")
 @patch("main.process_product_image", return_value="product-b64")
-async def test_process_product_qc_failed(
-    mock_process_product_image: Mock,
+@patch("main.generate_poster_content")
+async def test_process_product_qc_failed_after_retries(
     mock_generate_poster_content: Mock,
+    mock_process_product_image: Mock,
     mock_generate_poster_image: Mock,
     mock_check_poster_quality: Mock,
     mock_update_record_status: Mock,
     mock_send_feishu_alert: Mock,
+    mock_logger: Mock,
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("ASSETS_DIR", "./assets/products")
-    mock_generate_poster_content.return_value = Mock(image_prompt="make poster")
+    mock_generate_poster_content.return_value = Mock(
+        image_prompt="make poster",
+        headline="Retry headline",
+    )
+    mock_check_poster_quality.side_effect = [
+        QCResult(passed=False, issues=["Logo mismatch"], confidence=0.4),
+        QCResult(passed=False, issues=["Text unreadable"], confidence=0.3),
+        QCResult(passed=False, issues=["Product distorted"], confidence=0.2),
+    ]
     record = ProductRecord(
         record_id="rec_2",
-        product_name="浴小主泡澡球",
-        category="泡澡球",
+        product_name="Bath Ball",
+        category="bath-bombs",
         asset_filename="product.png",
     )
 
     result = await main.process_product(record)
 
     assert result is None
-    mock_update_record_status.assert_called_once_with(
-        "rec_2",
-        "FAILED_MANUAL",
-        error_msg="Logo mismatch",
+    assert mock_generate_poster_image.call_count == 3
+    assert mock_check_poster_quality.call_count == 3
+    mock_update_record_status.assert_has_calls(
+        [
+            call("rec_2", "COPY_OK"),
+            call("rec_2", "IMAGE_OK"),
+            call("rec_2", "IMAGE_OK"),
+            call("rec_2", "IMAGE_OK"),
+            call(
+                "rec_2",
+                "FAILED_MANUAL",
+                error_msg="QC failed after 3 attempts: ['Product distorted']",
+            ),
+        ]
     )
+    assert mock_update_record_status.call_count == 5
     mock_send_feishu_alert.assert_called_once()
+    mock_logger.warning.assert_called()
+
+    first_prompt = mock_generate_poster_image.call_args_list[0].args[0]
+    second_prompt = mock_generate_poster_image.call_args_list[1].args[0]
+    third_prompt = mock_generate_poster_image.call_args_list[2].args[0]
+    assert first_prompt == "make poster"
+    assert "Fix: Logo mismatch" in second_prompt
+    assert "Fix: Text unreadable" in third_prompt
 
 
 @pytest.mark.asyncio
