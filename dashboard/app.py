@@ -32,7 +32,9 @@ def create_app() -> FastAPI:
     )
 
     from dashboard.routers.auth_router import router as auth_router
+    from dashboard.routers.pipeline_router import router as pipeline_router
 
     app.include_router(auth_router)
+    app.include_router(pipeline_router)
 
     return app
