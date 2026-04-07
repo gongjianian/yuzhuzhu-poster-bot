@@ -1,15 +1,24 @@
 [Unit]
-Description=浴小主海报控制面板
+Description=Poster Dashboard
 After=network.target
 
 [Service]
 Type=simple
-User=root
+User=ubuntu
+Group=ubuntu
 WorkingDirectory=/opt/poster_bot
 EnvironmentFile=/opt/poster_bot/.env
 ExecStart=/opt/poster_bot/venv/bin/python main.py
 Restart=always
 RestartSec=5
+TimeoutStopSec=300
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/poster_bot/data /opt/poster_bot/logs /opt/poster_bot/assets
+StandardOutput=append:/opt/poster_bot/logs/systemd.log
+StandardError=append:/opt/poster_bot/logs/systemd.log
 
 [Install]
 WantedBy=multi-user.target
