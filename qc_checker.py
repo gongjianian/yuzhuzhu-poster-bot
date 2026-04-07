@@ -77,8 +77,16 @@ def check_poster_quality(poster_b64: str, product_b64: str) -> QCResult:
             return QCResult(**data)
         except (json.JSONDecodeError, Exception):
             logger.warning(f"QC model returned invalid JSON: {content[:200]}")
-            return QCResult(passed=True, issues=["QC model returned invalid JSON"], confidence=0.5)
+            return QCResult(
+                passed=False,
+                issues=["QC model returned invalid JSON; manual review required"],
+                confidence=0.0,
+            )
 
     except Exception as e:
-        logger.error(f"QC check failed: {e}. Defaulting to passed=True.")
-        return QCResult(passed=True, issues=[f"QC system failure: {str(e)}"], confidence=0.0)
+        logger.error(f"QC check failed: {e}. Manual review required.")
+        return QCResult(
+            passed=False,
+            issues=[f"QC system failure: {str(e)}; manual review required"],
+            confidence=0.0,
+        )

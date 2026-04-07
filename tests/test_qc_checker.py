@@ -57,6 +57,16 @@ def test_qc_handles_invalid_json(mock_build):
     mock_client.chat.completions.create.return_value = resp
 
     result = check_poster_quality(FAKE_B64, FAKE_B64)
-    # Defaults to passed=True to avoid blocking pipeline
-    assert result.passed is True
+    assert result.passed is False
+    assert "manual review required" in result.issues[0]
     assert len(result.issues) > 0
+
+
+@patch("qc_checker._build_client")
+def test_qc_handles_system_failure(mock_build):
+    mock_build.side_effect = RuntimeError("qc backend unavailable")
+
+    result = check_poster_quality(FAKE_B64, FAKE_B64)
+
+    assert result.passed is False
+    assert "manual review required" in result.issues[0]
