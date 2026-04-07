@@ -5,11 +5,12 @@ from models import PosterScheme, ProductRecord, QCResult
 
 
 def test_product_record_valid() -> None:
-    record = ProductRecord(record_id="rec_001", product_name="浴小主泡澡球")
+    record = ProductRecord(record_id="rec_001", product_name="Test Product")
 
     assert record.record_id == "rec_001"
-    assert record.product_name == "浴小主泡澡球"
+    assert record.product_name == "Test Product"
     assert record.status == "PENDING"
+    assert record.cloud_file_id == ""
 
 
 def test_product_record_missing_required() -> None:
@@ -20,16 +21,16 @@ def test_product_record_missing_required() -> None:
 def test_poster_scheme_valid() -> None:
     scheme = PosterScheme(
         scheme_name="minimal",
-        visual_style="极简扁平",
-        headline="焕亮泡澡时刻",
-        subheadline="把护理感做成海报",
-        body_copy=["植萃成分", "舒缓放松"],
-        cta="立即体验",
+        visual_style="Minimal",
+        headline="Headline",
+        subheadline="Subheadline",
+        body_copy=["Line 1", "Line 2"],
+        cta="Try now",
         image_prompt="Create a clean product poster",
     )
 
     assert scheme.aspect_ratio == "3:4"
-    assert scheme.body_copy == ["植萃成分", "舒缓放松"]
+    assert scheme.body_copy == ["Line 1", "Line 2"]
 
 
 def test_qc_result_valid() -> None:

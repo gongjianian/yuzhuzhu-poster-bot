@@ -41,6 +41,7 @@ def test_fetch_pending_records(mock_build_client: Mock) -> None:
             feishu_reader.FIELD_ASSET_FILENAME: "prod-1.png",
             feishu_reader.FIELD_STATUS: "PENDING",
             feishu_reader.FIELD_IDEMPOTENCY_KEY: "idem-1",
+            feishu_reader.FIELD_CLOUD_FILE_ID: "cloud://prod-1",
         },
     )
     item_two = SimpleNamespace(
@@ -67,6 +68,7 @@ def test_fetch_pending_records(mock_build_client: Mock) -> None:
 
     assert [record.record_id for record in records] == ["rec_1", "rec_2"]
     assert records[0].product_name == "Product One"
+    assert records[0].cloud_file_id == "cloud://prod-1"
     assert records[1].category == feishu_reader.DEFAULT_CATEGORY
     assert search.call_count == 2
 

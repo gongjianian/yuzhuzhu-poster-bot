@@ -84,6 +84,7 @@ def _parse_product_record(item: Any, *, default_status: str) -> ProductRecord:
         asset_filename=_extract_text(fields.get(FIELD_ASSET_FILENAME)),
         status=status or default_status,
         idempotency_key=_extract_text(fields.get(FIELD_IDEMPOTENCY_KEY)),
+        cloud_file_id=_extract_text(fields.get(FIELD_CLOUD_FILE_ID)),
     )
 
 

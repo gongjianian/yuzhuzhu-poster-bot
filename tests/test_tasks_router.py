@@ -34,6 +34,7 @@ def _mock_records():
             category="skin",
             status="PENDING",
             asset_filename="a.png",
+            cloud_file_id="cloud://a",
         ),
         ProductRecord(
             record_id="rec_002",
@@ -41,6 +42,7 @@ def _mock_records():
             category="bath",
             status="DONE",
             asset_filename="b.png",
+            cloud_file_id="cloud://b",
         ),
     ]
 
@@ -53,6 +55,7 @@ def test_list_tasks(mock_fetch):
     assert resp.status_code == 200
     data = resp.json()
     assert data["total"] == 2
+    assert data["items"][0]["cloud_file_id"] == "cloud://a"
 
 
 @patch("dashboard.routers.tasks_router.fetch_all_records")

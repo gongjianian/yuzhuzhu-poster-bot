@@ -51,6 +51,7 @@ class TaskResponse(BaseModel):
     category: str
     status: str
     asset_filename: str
+    cloud_file_id: str = ""
 
 
 class TaskListResponse(BaseModel):

@@ -28,6 +28,7 @@ async def list_tasks(
             category=record.category,
             status=record.status,
             asset_filename=record.asset_filename,
+            cloud_file_id=record.cloud_file_id,
         )
         for record in records
         if status is None or record.status == status

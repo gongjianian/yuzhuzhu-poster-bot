@@ -9,12 +9,13 @@ class ProductRecord(BaseModel):
     ingredients: str = ""
     benefits: str = ""
     xiaohongshu_topics: str = ""
-    category: str = "未分类"
-    visual_style: str = "极简扁平"
+    category: str = "\u672a\u5206\u7c7b"
+    visual_style: str = "\u6781\u7b80\u6241\u5e73"
     brand_colors: str = "#FFFFFF"
     asset_filename: str = ""
     status: str = "PENDING"
     idempotency_key: str = ""
+    cloud_file_id: str = ""
 
 
 class PosterScheme(BaseModel):
