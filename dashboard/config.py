@@ -1,28 +1,33 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 from dotenv import load_dotenv
-from pydantic_settings import BaseSettings
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 load_dotenv()
 
 
 class DashboardSettings(BaseSettings):
-    secret_key: str = os.getenv("DASHBOARD_SECRET_KEY", "")
-    admin_user: str = os.getenv("DASHBOARD_ADMIN_USER", "")
-    admin_password: str = os.getenv("DASHBOARD_ADMIN_PASSWORD", "")
-    db_path: str = os.getenv("DASHBOARD_DB_PATH", "./data/dashboard.db")
-    port: int = int(os.getenv("DASHBOARD_PORT", "8000"))
-    allowed_origins: list[str] = os.getenv(
-        "DASHBOARD_ALLOWED_ORIGINS", "http://localhost:5173"
-    ).split(",")
-    log_dir: str = "logs"
-    assets_dir: str = os.getenv("ASSETS_DIR", "./assets/products")
+    model_config = SettingsConfigDict(
+        env_prefix="DASHBOARD_",
+        enable_decoding=False,
+    )
 
-    class Config:
-        env_prefix = "DASHBOARD_"
+    secret_key: str = ""
+    admin_user: str = ""
+    admin_password: str = ""
+    db_path: str = "./data/dashboard.db"
+    port: int = 8000
+    allowed_origins: list[str] = ["http://localhost:5173"]
+    log_dir: str = "logs"
+    assets_dir: str = Field(default="./assets/products", validation_alias="ASSETS_DIR")
+
+    @field_validator("allowed_origins", mode="before")
+    @classmethod
+    def parse_allowed_origins(cls, value):
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
 
 
 settings = DashboardSettings()
