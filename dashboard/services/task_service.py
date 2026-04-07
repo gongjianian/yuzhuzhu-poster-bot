@@ -34,7 +34,8 @@ async def execute_full_pipeline(trigger_type: str = "cron") -> list[dict]:
         for result in results:
             save_run_result(db, result)
             if result["status"] == "FAILED":
-                _send_alert(
+                await asyncio.to_thread(
+                    _send_alert,
                     f"Poster generation failed: {result['product_name']} -> {result['error_msg']}"
                 )
 
@@ -50,7 +51,7 @@ async def execute_full_pipeline(trigger_type: str = "cron") -> list[dict]:
 
 
 async def execute_single_trigger(record_id: str) -> dict:
-    from feishu_reader import fetch_pending_records
+    from feishu_reader import fetch_all_records
 
     if _pipeline_lock.locked():
         return {
@@ -59,8 +60,17 @@ async def execute_single_trigger(record_id: str) -> dict:
             "error_msg": "Pipeline is already running, try again later",
         }
 
-    async with _pipeline_lock:
-        all_records = await asyncio.to_thread(fetch_pending_records)
+    try:
+        await asyncio.wait_for(_pipeline_lock.acquire(), timeout=0.001)
+    except asyncio.TimeoutError:
+        return {
+            "run_id": "",
+            "status": "BUSY",
+            "error_msg": "Pipeline is already running, try again later",
+        }
+
+    try:
+        all_records = await asyncio.to_thread(fetch_all_records)
         record = next((item for item in all_records if item.record_id == record_id), None)
 
         if record is None:
@@ -71,6 +81,8 @@ async def execute_single_trigger(record_id: str) -> dict:
             }
 
         result = await process_single_product(record, trigger_type="manual")
+    finally:
+        _pipeline_lock.release()
 
     db = SessionLocal()
     try:
@@ -81,7 +93,8 @@ async def execute_single_trigger(record_id: str) -> dict:
         db.close()
 
     if result["status"] == "FAILED":
-        _send_alert(
+        await asyncio.to_thread(
+            _send_alert,
             f"Poster generation failed: {result['product_name']} -> {result['error_msg']}"
         )
 
