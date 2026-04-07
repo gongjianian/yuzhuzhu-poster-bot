@@ -17,3 +17,5 @@ venv/
 *.key
 /tmp/poster_bot*
 .ccb/
+data/
+frontend/node_modules/
