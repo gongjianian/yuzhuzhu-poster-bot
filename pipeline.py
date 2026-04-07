@@ -57,14 +57,36 @@ def _finalize_result(result: dict, status: str, error_msg: str = "") -> dict:
     return result
 
 
+async def _safe_update_status(
+    record_id: str,
+    status: str,
+    *,
+    file_id: str = "",
+    error_msg: str = "",
+) -> None:
+    try:
+        await asyncio.to_thread(
+            update_record_status,
+            record_id,
+            status,
+            file_id=file_id,
+            error_msg=error_msg,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to update Feishu record {} to status {}",
+            record_id,
+            status,
+        )
+
+
 async def process_single_product(record, trigger_type: str = "cron") -> dict:
     result = _build_result(record, trigger_type)
     asset_dir = Path(os.getenv("ASSETS_DIR", "./assets/products"))
 
     if not record.asset_filename:
         _finalize_result(result, "FAILED", "Missing product asset filename")
-        await asyncio.to_thread(
-            update_record_status,
+        await _safe_update_status(
             record.record_id,
             "FAILED_MANUAL",
             error_msg=result["error_msg"],
@@ -78,7 +100,7 @@ async def process_single_product(record, trigger_type: str = "cron") -> dict:
         result["stage"] = "COPY_OK"
         result["headline"] = poster_scheme.headline
         result["image_prompt"] = poster_scheme.image_prompt
-        await asyncio.to_thread(update_record_status, record.record_id, "COPY_OK")
+        await _safe_update_status(record.record_id, "COPY_OK")
         logger.info("{}: content generated -> {}", record.product_name, poster_scheme.headline)
 
         product_b64 = await asyncio.to_thread(process_product_image, str(asset_path))
@@ -92,7 +114,7 @@ async def process_single_product(record, trigger_type: str = "cron") -> dict:
                 product_b64,
             )
             result["stage"] = "IMAGE_OK"
-            await asyncio.to_thread(update_record_status, record.record_id, "IMAGE_OK")
+            await _safe_update_status(record.record_id, "IMAGE_OK")
 
             poster_b64 = base64.b64encode(poster_bytes).decode("utf-8")
             qc_result = await asyncio.to_thread(
@@ -130,8 +152,7 @@ async def process_single_product(record, trigger_type: str = "cron") -> dict:
                     "FAILED",
                     f"QC failed after {MAX_QC_RETRIES + 1} attempts: {qc_result.issues}",
                 )
-                await asyncio.to_thread(
-                    update_record_status,
+                await _safe_update_status(
                     record.record_id,
                     "FAILED_MANUAL",
                     error_msg=result["error_msg"],
@@ -142,14 +163,7 @@ async def process_single_product(record, trigger_type: str = "cron") -> dict:
         file_id = await asyncio.to_thread(upload_image, poster_bytes, cloud_path)
         result["stage"] = "UPLOAD_OK"
         result["cloud_file_id"] = file_id
-        await asyncio.to_thread(
-            update_record_status,
-            record.record_id,
-            "UPLOAD_OK",
-            file_id=file_id,
-        )
-        await asyncio.to_thread(
-            update_record_status,
+        await _safe_update_status(
             record.record_id,
             "DONE",
             file_id=file_id,
@@ -164,8 +178,7 @@ async def process_single_product(record, trigger_type: str = "cron") -> dict:
         return result
     except Exception as exc:
         _finalize_result(result, "FAILED", str(exc))
-        await asyncio.to_thread(
-            update_record_status,
+        await _safe_update_status(
             record.record_id,
             "FAILED_RETRYABLE",
             error_msg=result["error_msg"],
@@ -178,7 +191,13 @@ async def run_full_pipeline(trigger_type: str = "cron") -> list[dict]:
         logger.warning("Pipeline is already running, skipping")
         return []
 
-    async with _pipeline_lock:
+    try:
+        await asyncio.wait_for(_pipeline_lock.acquire(), timeout=0.001)
+    except asyncio.TimeoutError:
+        logger.warning("Pipeline is already running, skipping")
+        return []
+
+    try:
         records = await asyncio.to_thread(fetch_pending_records)
         if not records:
             logger.info("No pending records found")
@@ -188,6 +207,8 @@ async def run_full_pipeline(trigger_type: str = "cron") -> list[dict]:
         for record in records:
             results.append(await process_single_product(record, trigger_type))
         return results
+    finally:
+        _pipeline_lock.release()
 
 
 async def trigger_single_product(record_id: str) -> dict:

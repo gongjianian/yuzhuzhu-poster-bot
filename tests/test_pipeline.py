@@ -1,5 +1,5 @@
 import asyncio
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -7,25 +7,32 @@ from models import ProductRecord
 
 
 @pytest.mark.asyncio
-async def test_pipeline_lock_prevents_double_run():
-    from pipeline import _pipeline_lock
+async def test_run_full_pipeline_rejects_concurrent_execution():
+    from pipeline import run_full_pipeline
 
-    results = []
+    record = ProductRecord(
+        record_id="rec_001",
+        product_name="Product A",
+        asset_filename="asset.png",
+    )
 
-    async def fake_run():
-        if _pipeline_lock.locked():
-            results.append("skipped")
-            return
-        async with _pipeline_lock:
-            await asyncio.sleep(0.1)
-            results.append("ran")
+    async def slow_process(record, trigger_type):
+        await asyncio.sleep(0.05)
+        return {"record_id": record.record_id, "status": "DONE", "trigger_type": trigger_type}
 
-    await asyncio.gather(fake_run(), fake_run())
-    assert "ran" in results
-    assert "skipped" in results
+    with patch("pipeline.fetch_pending_records", return_value=[record]), patch(
+        "pipeline.process_single_product",
+        new=AsyncMock(side_effect=slow_process),
+    ):
+        first, second = await asyncio.gather(
+            run_full_pipeline("cron"),
+            run_full_pipeline("cron"),
+        )
+
+    assert sorted([len(first), len(second)]) == [0, 1]
 
 
-def test_process_single_product_missing_asset():
+def test_process_single_product_missing_asset_survives_status_update_failure():
     from pipeline import process_single_product
 
     record = ProductRecord(
@@ -33,7 +40,7 @@ def test_process_single_product_missing_asset():
         product_name="test-product",
         asset_filename="",
     )
-    with patch("pipeline.update_record_status"):
+    with patch("pipeline.update_record_status", side_effect=RuntimeError("boom")):
         result = asyncio.run(process_single_product(record))
 
     assert result["status"] == "FAILED"
