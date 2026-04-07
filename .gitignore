@@ -19,3 +19,7 @@ venv/
 .ccb/
 data/
 frontend/node_modules/
+
+# 产品介绍文档（业务数据，不入 git）
+*.doc
+*.docx
