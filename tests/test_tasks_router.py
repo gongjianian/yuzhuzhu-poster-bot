@@ -11,6 +11,7 @@ os.environ["DASHBOARD_SECRET_KEY"] = "test-secret-key-with-32-bytes-min"
 from fastapi.testclient import TestClient
 
 from dashboard.app import create_app
+from dashboard.routers.tasks_router import MAX_BATCH_SIZE
 from models import ProductRecord
 
 app = create_app()
@@ -44,7 +45,7 @@ def _mock_records():
     ]
 
 
-@patch("dashboard.routers.tasks_router.fetch_pending_records")
+@patch("dashboard.routers.tasks_router.fetch_all_records")
 def test_list_tasks(mock_fetch):
     mock_fetch.return_value = _mock_records()
     token = _get_token()
@@ -54,7 +55,7 @@ def test_list_tasks(mock_fetch):
     assert data["total"] == 2
 
 
-@patch("dashboard.routers.tasks_router.fetch_pending_records")
+@patch("dashboard.routers.tasks_router.fetch_all_records")
 def test_list_tasks_filter_by_status(mock_fetch):
     mock_fetch.return_value = _mock_records()
     token = _get_token()
@@ -73,11 +74,13 @@ def test_list_tasks_requires_auth():
     assert resp.status_code == 401
 
 
+@patch("dashboard.routers.tasks_router.fetch_all_records")
 @patch(
     "dashboard.routers.tasks_router.execute_single_trigger",
     new=AsyncMock(return_value={"status": "DONE"}),
 )
-def test_trigger_single():
+def test_trigger_single(mock_fetch):
+    mock_fetch.return_value = _mock_records()
     token = _get_token()
     resp = client.post(
         "/api/tasks/rec_001/trigger",
@@ -85,6 +88,17 @@ def test_trigger_single():
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "queued"
+
+
+@patch("dashboard.routers.tasks_router.fetch_all_records")
+def test_trigger_single_returns_404_for_missing_record(mock_fetch):
+    mock_fetch.return_value = _mock_records()
+    token = _get_token()
+    resp = client.post(
+        "/api/tasks/rec_missing/trigger",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 404
 
 
 @patch(
@@ -100,3 +114,23 @@ def test_batch_trigger():
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "queued"
+
+
+def test_batch_trigger_rejects_empty_list():
+    token = _get_token()
+    resp = client.post(
+        "/api/tasks/batch-trigger",
+        json=[],
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 400
+
+
+def test_batch_trigger_rejects_oversized_batch():
+    token = _get_token()
+    resp = client.post(
+        "/api/tasks/batch-trigger",
+        json=[f"rec_{index:03d}" for index in range(MAX_BATCH_SIZE + 1)],
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 400
