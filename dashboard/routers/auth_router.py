@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from dashboard.auth import (
     create_access_token,
     get_current_user,
-    get_password_hash,
-    verify_password,
 )
 from dashboard.config import get_settings
 
@@ -27,13 +27,9 @@ class TokenResponse(BaseModel):
 @router.post("/login", response_model=TokenResponse)
 def login(body: LoginRequest):
     settings = get_settings()
-    admin_hash = (
-        get_password_hash(settings.admin_password) if settings.admin_password else ""
-    )
     if (
-        body.username != settings.admin_user
-        or not admin_hash
-        or not verify_password(body.password, admin_hash)
+        not secrets.compare_digest(body.username, settings.admin_user)
+        or not secrets.compare_digest(body.password, settings.admin_password)
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
