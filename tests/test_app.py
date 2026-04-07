@@ -2,7 +2,7 @@ import os
 import tempfile
 from pathlib import Path
 
-os.environ["DASHBOARD_SECRET_KEY"] = "test-secret"
+os.environ["DASHBOARD_SECRET_KEY"] = "test-secret-key-with-32-bytes-min"
 os.environ["DASHBOARD_ADMIN_USER"] = "admin"
 os.environ["DASHBOARD_ADMIN_PASSWORD"] = "test-password"
 os.environ["DASHBOARD_DB_PATH"] = str(Path(tempfile.mkdtemp()) / "test.db")
