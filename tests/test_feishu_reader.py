@@ -31,26 +31,31 @@ def test_fetch_pending_records(mock_build_client: Mock) -> None:
     item_one = SimpleNamespace(
         record_id="rec_1",
         fields={
-            "产品名称": [{"text": "Product One"}],
-            "成分": "Mint",
-            "功效": "Calming",
-            "小红书话题": [{"text": "#bath"}],
-            "分类": "泡澡球",
-            "海报风格": "极简",
-            "品牌色": "#ABCDEF",
-            "产品素材图文件名": "prod-1.png",
-            "状态": "PENDING",
-            "幂等键": "idem-1",
+            feishu_reader.FIELD_PRODUCT_NAME: [{"text": "Product One"}],
+            feishu_reader.FIELD_INGREDIENTS: "Mint",
+            feishu_reader.FIELD_BENEFITS: "Calming",
+            feishu_reader.FIELD_TOPICS: [{"text": "#bath"}],
+            feishu_reader.FIELD_CATEGORY: "Bath Care",
+            feishu_reader.FIELD_VISUAL_STYLE: "Minimal",
+            feishu_reader.FIELD_BRAND_COLORS: "#ABCDEF",
+            feishu_reader.FIELD_ASSET_FILENAME: "prod-1.png",
+            feishu_reader.FIELD_STATUS: "PENDING",
+            feishu_reader.FIELD_IDEMPOTENCY_KEY: "idem-1",
         },
     )
     item_two = SimpleNamespace(
         record_id="rec_2",
         fields={
-            "产品名称": "Product Two",
-            "状态": "FAILED_RETRYABLE",
+            feishu_reader.FIELD_PRODUCT_NAME: "Product Two",
+            feishu_reader.FIELD_STATUS: "FAILED_RETRYABLE",
         },
     )
-    search = Mock(side_effect=[_mock_response(items=[item_one], has_more=True, page_token="next"), _mock_response(items=[item_two])])
+    search = Mock(
+        side_effect=[
+            _mock_response(items=[item_one], has_more=True, page_token="next"),
+            _mock_response(items=[item_two]),
+        ]
+    )
     mock_client = SimpleNamespace(
         bitable=SimpleNamespace(
             v1=SimpleNamespace(app_table_record=SimpleNamespace(search=search))
@@ -62,7 +67,7 @@ def test_fetch_pending_records(mock_build_client: Mock) -> None:
 
     assert [record.record_id for record in records] == ["rec_1", "rec_2"]
     assert records[0].product_name == "Product One"
-    assert records[1].category == "未分类"
+    assert records[1].category == feishu_reader.DEFAULT_CATEGORY
     assert search.call_count == 2
 
 
@@ -78,6 +83,30 @@ def test_fetch_pending_records_raises_on_error(mock_build_client: Mock) -> None:
 
     with pytest.raises(RuntimeError):
         feishu_reader.fetch_pending_records()
+
+
+@patch("feishu_reader.build_client")
+def test_fetch_all_records_keeps_empty_status(mock_build_client: Mock) -> None:
+    item = SimpleNamespace(
+        record_id="rec_3",
+        fields={
+            feishu_reader.FIELD_PRODUCT_NAME: "Product Three",
+        },
+    )
+    search = Mock(return_value=_mock_response(items=[item]))
+    mock_client = SimpleNamespace(
+        bitable=SimpleNamespace(
+            v1=SimpleNamespace(app_table_record=SimpleNamespace(search=search))
+        )
+    )
+    mock_build_client.return_value = mock_client
+
+    records = feishu_reader.fetch_all_records()
+
+    assert len(records) == 1
+    assert records[0].status == ""
+    request = search.call_args.args[0]
+    assert getattr(request, "request_body", None) is None
 
 
 @patch("feishu_reader.build_client")
@@ -99,9 +128,12 @@ def test_update_record_status(mock_build_client: Mock) -> None:
 
     request = update.call_args.args[0]
     assert request.record_id == "rec_1"
-    assert request.request_body.fields["状态"] == "DONE"
-    assert request.request_body.fields["云存储fileID"] == "cloud://file-id"
-    assert "最后生成时间" in request.request_body.fields
+    assert request.request_body.fields[feishu_reader.FIELD_STATUS] == "DONE"
+    assert (
+        request.request_body.fields[feishu_reader.FIELD_CLOUD_FILE_ID]
+        == "cloud://file-id"
+    )
+    assert feishu_reader.FIELD_LAST_GENERATED_AT in request.request_body.fields
 
 
 @patch("feishu_reader.build_client")
