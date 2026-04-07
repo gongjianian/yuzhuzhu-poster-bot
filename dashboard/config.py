@@ -31,3 +31,7 @@ class DashboardSettings(BaseSettings):
 
 
 settings = DashboardSettings()
+
+
+def get_settings() -> DashboardSettings:
+    return DashboardSettings()
