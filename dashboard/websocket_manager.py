@@ -9,6 +9,10 @@ class WebSocketManager:
     def __init__(self):
         self._connections: set[WebSocket] = set()
         self._lock = asyncio.Lock()
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def bind_loop(self, loop: asyncio.AbstractEventLoop | None = None):
+        self._loop = loop or asyncio.get_running_loop()
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
@@ -41,9 +45,11 @@ ws_manager = WebSocketManager()
 
 def loguru_ws_sink(message):
     text = str(message).rstrip("\n")
-    if text and ws_manager._connections:
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(ws_manager.broadcast(text))
-        except RuntimeError:
-            pass
+    if not text or not ws_manager._connections or ws_manager._loop is None:
+        return
+
+    def schedule_broadcast():
+        assert ws_manager._loop is not None
+        ws_manager._loop.create_task(ws_manager.broadcast(text))
+
+    ws_manager._loop.call_soon_threadsafe(schedule_broadcast)

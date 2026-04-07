@@ -16,8 +16,9 @@ from dashboard.database import init_db
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    from dashboard.websocket_manager import loguru_ws_sink
+    from dashboard.websocket_manager import loguru_ws_sink, ws_manager
 
+    ws_manager.bind_loop()
     sink_id = logger.add(loguru_ws_sink, level="DEBUG")
     try:
         yield
