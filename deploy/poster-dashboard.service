@@ -1,0 +1,15 @@
+[Unit]
+Description=浴小主海报控制面板
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/poster_bot
+EnvironmentFile=/opt/poster_bot/.env
+ExecStart=/opt/poster_bot/venv/bin/python main.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
