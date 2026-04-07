@@ -3,6 +3,8 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 os.environ["DASHBOARD_DB_PATH"] = str(Path(tempfile.mkdtemp()) / "test.db")
 os.environ["DASHBOARD_ADMIN_USER"] = "admin"
 os.environ["DASHBOARD_ADMIN_PASSWORD"] = "test123"
@@ -19,12 +21,16 @@ log_dir = Path("logs")
 log_dir.mkdir(exist_ok=True)
 today = datetime.now().strftime("%Y-%m-%d")
 log_file = log_dir / f"poster_bot_{today}.log"
-log_file.write_text(
-    "2026-04-07 08:00:01.123 | INFO | first log line\n"
-    "2026-04-07 08:00:02.456 | ERROR | second error line\n"
-    "2026-04-07 08:00:03.789 | INFO | line with keyword\n",
-    encoding="utf-8",
-)
+
+
+@pytest.fixture(autouse=True)
+def reset_log_file():
+    log_file.write_text(
+        "2026-04-07 08:00:01.123 | INFO | first log line\n"
+        "2026-04-07 08:00:02.456 | ERROR | second error line\n"
+        "2026-04-07 08:00:03.789 | INFO | line with keyword\n",
+        encoding="utf-8",
+    )
 
 
 def _get_token():
