@@ -16,7 +16,7 @@ from dashboard.app import create_app
 def test_app_starts():
     app = create_app()
     client = TestClient(app)
-    response = client.get("/docs")
+    response = client.get("/api/docs")
     assert response.status_code == 200
 
 
@@ -24,7 +24,7 @@ def test_cors_headers():
     app = create_app()
     client = TestClient(app)
     response = client.options(
-        "/docs",
+        "/api/docs",
         headers={
             "Origin": "http://localhost:5173",
             "Access-Control-Request-Method": "GET",

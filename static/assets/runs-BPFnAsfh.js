@@ -1,0 +1,1 @@
+import{t as e}from"./request-B82umTc3.js";function t(t){return e.get(`/runs`,{params:t})}function n(t){return e.get(`/runs/${t}`)}export{t as n,n as t};

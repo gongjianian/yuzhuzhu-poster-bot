@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from dashboard.config import get_settings
@@ -28,6 +31,9 @@ def create_app() -> FastAPI:
         title="浴小主海报控制面板",
         version="1.0.0",
         lifespan=lifespan,
+        docs_url="/api/docs",
+        openapi_url="/api/openapi.json",
+        redoc_url="/api/redoc",
     )
 
     app.add_middleware(
@@ -53,5 +59,17 @@ def create_app() -> FastAPI:
     app.include_router(runs_router)
     app.include_router(stats_router)
     app.include_router(tasks_router)
+
+    static_dir = Path(__file__).parent.parent / "static"
+    static_assets_dir = static_dir / "assets"
+    if static_assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(static_assets_dir)), name="static-assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        index_file = static_dir / "index.html"
+        if index_file.exists():
+            return FileResponse(str(index_file))
+        return JSONResponse({"detail": "Frontend not built"}, status_code=404)
 
     return app
