@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import requests
+from lark_oapi.api.bitable.v1 import ListAppTableRequest
 
 
 def check_feishu() -> dict:
@@ -13,13 +14,29 @@ def check_feishu() -> dict:
         start = time.time()
         from feishu_reader import build_client
 
-        build_client()
+        client = build_client()
+        request = (
+            ListAppTableRequest.builder()
+            .app_token(os.getenv("FEISHU_APP_TOKEN", ""))
+            .page_size(1)
+            .build()
+        )
+        response = client.bitable.v1.app_table.list(request)
         latency = (time.time() - start) * 1000
+        if hasattr(response, "success") and not response.success():
+            code = getattr(response, "code", "unknown")
+            msg = getattr(response, "msg", "unknown error")
+            return {
+                "name": "Feishu API",
+                "status": "error",
+                "latency_ms": round(latency, 1),
+                "detail": f"{code} {msg}",
+            }
         return {
             "name": "Feishu API",
             "status": "ok",
             "latency_ms": round(latency, 1),
-            "detail": "Connection initialized",
+            "detail": "Authenticated table probe succeeded",
         }
     except Exception as exc:
         return {
@@ -40,7 +57,7 @@ def check_gemini() -> dict:
             headers={"Authorization": f"Bearer {os.getenv('GEMINI_API_KEY', '')}"},
         )
         latency = (time.time() - start) * 1000
-        status = "ok" if response.status_code in (200, 401) else "error"
+        status = "ok" if response.status_code == 200 else "error"
         return {
             "name": "Gemini API",
             "status": status,
