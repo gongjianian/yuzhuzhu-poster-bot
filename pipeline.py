@@ -177,7 +177,14 @@ async def process_single_product(record, trigger_type: str = "cron") -> dict:
         )
         return result
     except Exception as exc:
-        _finalize_result(result, "FAILED", str(exc))
+        # Log full stack trace so failures are debuggable in systemd.log
+        logger.exception(
+            "Pipeline failed for {} (stage={}): {}",
+            record.product_name,
+            result.get("stage", ""),
+            exc,
+        )
+        _finalize_result(result, "FAILED", f"{type(exc).__name__}: {exc}")
         await _safe_update_status(
             record.record_id,
             "FAILED_RETRYABLE",

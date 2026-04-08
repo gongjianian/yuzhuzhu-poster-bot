@@ -26,7 +26,7 @@ FIELD_TOPICS = "\u5c0f\u7ea2\u4e66\u8bdd\u9898"
 FIELD_CATEGORY = "\u5206\u7c7b"
 FIELD_VISUAL_STYLE = "\u6d77\u62a5\u98ce\u683c"
 FIELD_BRAND_COLORS = "\u54c1\u724c\u8272"
-FIELD_ASSET_FILENAME = "\u4ea7\u54c1\u7d20\u6750\u56fe\u7247\u6587\u4ef6\u540d"
+FIELD_ASSET_FILENAME = "\u4ea7\u54c1\u7d20\u6750\u56fe\u6587\u4ef6\u540d"
 FIELD_STATUS = "\u72b6\u6001"
 FIELD_IDEMPOTENCY_KEY = "\u5e42\u7b49\u952e"
 FIELD_CLOUD_FILE_ID = "\u4e91\u5b58\u50a8FileID"
@@ -187,9 +187,10 @@ def update_record_status(
     app_token = os.getenv("FEISHU_APP_TOKEN", "")
     table_id = os.getenv("FEISHU_TABLE_ID", "")
 
+    # Feishu DateTime field requires Unix milliseconds (int), not ISO string
     fields: dict[str, Any] = {
         FIELD_STATUS: status,
-        FIELD_LAST_GENERATED_AT: datetime.now().isoformat(timespec="seconds"),
+        FIELD_LAST_GENERATED_AT: int(datetime.now().timestamp() * 1000),
     }
     if file_id:
         fields[FIELD_CLOUD_FILE_ID] = file_id

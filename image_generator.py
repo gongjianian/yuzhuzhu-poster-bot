@@ -4,9 +4,9 @@ import base64
 import os
 from typing import Any
 
-from dotenv import load_dotenv
-from openai import OpenAI
 import requests
+from dotenv import load_dotenv
+from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 
@@ -20,94 +20,78 @@ FUSION_RULES = (
 )
 
 
-def _build_client() -> OpenAI:
-    return OpenAI(
-        api_key=os.getenv("GEMINI_API_KEY"),
-        base_url=os.getenv("GEMINI_API_BASE", "https://api.buxianliang.fun/v1"),
-    )
-
-
-def _get_value(obj: Any, key: str, default: Any = None) -> Any:
-    if isinstance(obj, dict):
-        return obj.get(key, default)
-    return getattr(obj, key, default)
-
-
-def _decode_image_url(url: str) -> bytes:
-    if url.startswith("data:"):
-        _, encoded = url.split(",", 1)
-        return base64.b64decode(encoded)
-
-    response = requests.get(url, timeout=30)
-    response.raise_for_status()
-    return response.content
-
-
-def _extract_image_bytes(response: Any) -> bytes:
-    data_items = _get_value(response, "data", []) or []
-    for item in data_items:
-        b64_json = _get_value(item, "b64_json")
-        if b64_json:
-            return base64.b64decode(b64_json)
-
-        url = _get_value(item, "url")
-        if url:
-            return _decode_image_url(url)
-
-    choices = _get_value(response, "choices", []) or []
-    for choice in choices:
-        message = _get_value(choice, "message", {})
-        content = _get_value(message, "content", [])
-        if isinstance(content, (str, bytes)):
-            continue
-        if isinstance(content, dict):
-            content = [content]
-
-        for part in content:
-            part_type = _get_value(part, "type", "")
-            if part_type in {"output_image", "image"}:
-                image_b64 = (
-                    _get_value(part, "image_base64")
-                    or _get_value(part, "b64_json")
-                    or _get_value(part, "data")
-                )
-                if image_b64:
-                    return base64.b64decode(image_b64)
-
-            if part_type == "image_url":
-                image_url = _get_value(part, "image_url")
-                if isinstance(image_url, dict):
-                    url = image_url.get("url", "")
-                else:
-                    url = image_url or ""
-                if url:
-                    return _decode_image_url(url)
-
-    raise ValueError("No image content found in model response")
+def _build_endpoint(model: str) -> str:
+    base = os.getenv("GEMINI_API_BASE", "https://api.buxianliang.fun/v1").rstrip("/")
+    # OpenAI-compatible base ends in /v1; native Gemini endpoint lives at /v1beta
+    if base.endswith("/v1"):
+        base = base[:-3] + "/v1beta"
+    elif not base.endswith("/v1beta"):
+        base = base + "/v1beta"
+    return f"{base}/models/{model}:generateContent"
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=5, max=60), reraise=True)
 def generate_poster_image(image_prompt: str, product_image_b64: str) -> bytes:
-    client = _build_client()
+    """Generate a poster image using Gemini's native generateContent API.
+
+    The OpenAI-compatible chat.completions endpoint silently returns content=null
+    for image generation models on this proxy, so we use the native Gemini format
+    which returns inline_data parts containing the image bytes.
+    """
     model = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3-pro-image-preview")
+    api_key = os.getenv("GEMINI_API_KEY", "")
     prompt = f"{image_prompt}\n\n{FUSION_RULES}"
 
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
+    payload = {
+        "contents": [
             {
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
+                "parts": [
+                    {"text": prompt},
                     {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{product_image_b64}",
-                        },
+                        "inline_data": {
+                            "mime_type": "image/png",
+                            "data": product_image_b64,
+                        }
                     },
                 ],
             }
         ],
+        "generationConfig": {
+            "responseModalities": ["IMAGE", "TEXT"],
+        },
+    }
+
+    response = requests.post(
+        _build_endpoint(model),
+        headers={
+            "x-goog-api-key": api_key,
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=300,
     )
 
-    return _extract_image_bytes(response)
+    if response.status_code != 200:
+        snippet = response.text[:500]
+        raise RuntimeError(
+            f"Gemini image generation failed: HTTP {response.status_code} - {snippet}"
+        )
+
+    data = response.json()
+    candidates = data.get("candidates") or []
+    if not candidates:
+        raise ValueError(f"No candidates in Gemini response: {str(data)[:300]}")
+
+    parts = (candidates[0].get("content") or {}).get("parts") or []
+    for part in parts:
+        inline = part.get("inlineData") or part.get("inline_data")
+        if inline:
+            b64_data = inline.get("data", "")
+            if b64_data:
+                return base64.b64decode(b64_data)
+
+    raise ValueError(
+        f"No image data found in Gemini response. Parts: {[list(p.keys()) for p in parts]}"
+    )
