@@ -107,8 +107,13 @@ def test_fetch_all_records_keeps_empty_status(mock_build_client: Mock) -> None:
 
     assert len(records) == 1
     assert records[0].status == ""
+    # Feishu search API requires a request_body for every call.
+    # When no status filter is applied, the body must still exist
+    # but should not contain a filter clause.
     request = search.call_args.args[0]
-    assert getattr(request, "request_body", None) is None
+    body = getattr(request, "request_body", None)
+    assert body is not None
+    assert getattr(body, "filter", None) is None
 
 
 @patch("feishu_reader.build_client")

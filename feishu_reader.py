@@ -101,6 +101,8 @@ def _build_search_request(
         .table_id(table_id)
         .page_size(100)
     )
+    # Feishu's search API requires a request_body even when no filter is applied
+    body_builder = SearchAppTableRecordRequestBody.builder()
     if statuses:
         filter_info = (
             FilterInfo.builder()
@@ -117,12 +119,8 @@ def _build_search_request(
             )
             .build()
         )
-        request_body = (
-            SearchAppTableRecordRequestBody.builder()
-            .filter(filter_info)
-            .build()
-        )
-        builder = builder.request_body(request_body)
+        body_builder = body_builder.filter(filter_info)
+    builder = builder.request_body(body_builder.build())
     if page_token:
         builder = builder.page_token(page_token)
     return builder.build()
