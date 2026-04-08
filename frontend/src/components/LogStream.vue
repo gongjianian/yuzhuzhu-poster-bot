@@ -52,6 +52,12 @@ const ws = ref<WebSocket | null>(null)
 const isPaused = ref(false)
 const connectionStatus = ref<'connecting' | 'connected' | 'disconnected'>('disconnected')
 
+// Reconnect state - track timer and disposal flag to prevent leaks
+let reconnectTimer: number | null = null
+let isDisposed = false
+let reconnectAttempts = 0
+const MAX_RECONNECT_DELAY = 30000  // 30s cap
+
 const statusText = computed(() => {
   const map = {
     connecting: '连接中...',
@@ -61,23 +67,42 @@ const statusText = computed(() => {
   return map[connectionStatus.value]
 })
 
+const scheduleReconnect = () => {
+  if (isDisposed) return  // Component unmounted - stop reconnecting
+  if (reconnectTimer !== null) return  // Already scheduled
+
+  // Exponential backoff: 3s, 6s, 12s, 24s, capped at 30s
+  const delay = Math.min(3000 * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY)
+  reconnectAttempts++
+
+  reconnectTimer = window.setTimeout(() => {
+    reconnectTimer = null
+    if (!isDisposed) {
+      connectWebSocket()
+    }
+  }, delay)
+}
+
 const connectWebSocket = () => {
+  if (isDisposed) return  // Don't reconnect if component is unmounted
+
   if (ws.value) {
+    ws.value.onclose = null  // Prevent old socket from triggering reconnect
     ws.value.close()
   }
 
   connectionStatus.value = 'connecting'
-  
+
   // Construct WebSocket URL
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const host = window.location.host
-  // Assuming Vite dev server proxy or production same-origin
   const wsUrl = `${protocol}//${host}/api/logs/stream?token=${authStore.token}`
 
   ws.value = new WebSocket(wsUrl)
 
   ws.value.onopen = () => {
     connectionStatus.value = 'connected'
+    reconnectAttempts = 0  // Reset backoff on successful connection
   }
 
   ws.value.onmessage = (event) => {
@@ -96,12 +121,12 @@ const connectWebSocket = () => {
 
   ws.value.onclose = () => {
     connectionStatus.value = 'disconnected'
-    // Attempt reconnect after 3 seconds
-    setTimeout(connectWebSocket, 3000)
+    scheduleReconnect()
   }
 
   ws.value.onerror = () => {
     connectionStatus.value = 'disconnected'
+    // onclose will fire after onerror, no need to schedule here
   }
 }
 
@@ -139,13 +164,27 @@ const getLogClass = (log: LogEntry) => {
 }
 
 onMounted(() => {
+  isDisposed = false
+  reconnectAttempts = 0
   connectWebSocket()
 })
 
 onUnmounted(() => {
+  // Mark as disposed first so any in-flight callbacks become no-ops
+  isDisposed = true
+
+  // Clear pending reconnect timer
+  if (reconnectTimer !== null) {
+    window.clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+
+  // Close socket without triggering onclose reconnect
   if (ws.value) {
-    ws.value.onclose = null // Prevent auto-reconnect
+    ws.value.onclose = null
+    ws.value.onerror = null
     ws.value.close()
+    ws.value = null
   }
 })
 </script>

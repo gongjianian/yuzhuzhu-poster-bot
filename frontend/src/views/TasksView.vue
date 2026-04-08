@@ -75,7 +75,11 @@
       </el-table>
     </el-card>
 
-    <PosterPreview v-model="previewVisible" :imageUrl="previewUrl" />
+    <PosterPreview
+      v-model="previewVisible"
+      :cloudFileId="previewCloudFileId"
+      :productName="previewProductName"
+    />
   </div>
 </template>
 
@@ -92,7 +96,8 @@ const statusFilter = ref('')
 const selectedRows = ref<any[]>([])
 
 const previewVisible = ref(false)
-const previewUrl = ref('')
+const previewCloudFileId = ref('')
+const previewProductName = ref('')
 
 const loadTasks = async () => {
   loading.value = true
@@ -111,9 +116,8 @@ const handleSelectionChange = (val: any[]) => {
 }
 
 const handlePreview = (row: any) => {
-  // In a real app, this would be a URL fetched from the backend or constructed based on row data
-  // Using a placeholder API for demonstration if cloud_file_id is missing
-  previewUrl.value = row.cloud_file_id || `https://picsum.photos/seed/${row.record_id}/600/800`
+  previewCloudFileId.value = row.cloud_file_id || ''
+  previewProductName.value = row.product_name || ''
   previewVisible.value = true
 }
 
