@@ -53,20 +53,17 @@ def test_qc_result_failed() -> None:
     assert result.confidence == 0.35
 
 
-def test_product_record_has_product_line():
-    from models import ProductRecord
+def test_product_record_has_product_line() -> None:
     r = ProductRecord(record_id="r1", product_name="鸡内金泡浴")
     assert r.product_line == "未知产品线"
 
 
-def test_product_record_product_line_set():
-    from models import ProductRecord
+def test_product_record_product_line_set() -> None:
     r = ProductRecord(record_id="r1", product_name="鸡内金泡浴", product_line="五行泡浴")
     assert r.product_line == "五行泡浴"
 
 
-def test_category_poster_task_model():
-    from models import CategoryPosterTask
+def test_category_poster_task_model() -> None:
     task = CategoryPosterTask(
         category_id="cat_pw_jstl",
         level1_category_id="cat_piwei",
@@ -75,4 +72,7 @@ def test_category_poster_task_model():
         products=[],
     )
     assert task.category_id == "cat_pw_jstl"
+    assert task.level1_category_id == "cat_piwei"
+    assert task.category_name == "积食停滞类"
     assert task.product_line == "五行泡浴"
+    assert task.products == []
