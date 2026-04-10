@@ -1,4 +1,7 @@
-from unittest.mock import Mock, patch
+import re
+from unittest.mock import MagicMock, Mock, patch
+
+import pytest
 
 import wechat_uploader
 
@@ -61,3 +64,54 @@ def test_build_cloud_path() -> None:
         path = wechat_uploader.build_cloud_path("bath-bombs", "store/product")
 
     assert path == "images/bath-bombs/store_product_20260406.jpg"
+
+
+@patch("wechat_uploader.get_wx_access_token", return_value="fake_token")
+@patch("wechat_uploader.requests.post")
+def test_register_material_calls_tcb_api(mock_post, mock_token):
+    from wechat_uploader import register_material
+
+    mock_post.return_value = MagicMock(
+        status_code=200,
+        json=lambda: {"errcode": 0, "id_list": ["mat_001"]}
+    )
+    mat_id = register_material(
+        file_id="cloud://env.abc/materials/test.jpg",
+        title="积食停滞类 · 五行泡浴",
+        category_id="cat_pw_jstl",
+        level1_category_id="cat_piwei",
+        product_type="五行泡浴",
+    )
+    assert mat_id == "mat_001"
+    mock_post.assert_called_once()
+    call_kwargs = mock_post.call_args
+    assert "databaseadd" in call_kwargs[0][0]
+
+
+@patch("wechat_uploader.get_wx_access_token", return_value="fake_token")
+@patch("wechat_uploader.requests.post")
+def test_register_material_raises_on_error(mock_post, mock_token):
+    from wechat_uploader import register_material
+
+    mock_post.return_value = MagicMock(
+        status_code=200,
+        json=lambda: {"errcode": -1, "errmsg": "system error"}
+    )
+    with pytest.raises(RuntimeError, match="register_material"):
+        register_material(
+            file_id="cloud://env.abc/materials/test.jpg",
+            title="test",
+            category_id="cat_pw_jstl",
+            level1_category_id="cat_piwei",
+            product_type="五行泡浴",
+        )
+
+
+def test_build_material_cloud_path_format():
+    from wechat_uploader import build_material_cloud_path
+    path = build_material_cloud_path(
+        level1_category_id="cat_piwei",
+        category_id="cat_pw_jstl",
+        product_type="五行泡浴",
+    )
+    assert re.match(r"materials/cat_piwei/cat_pw_jstl/五行泡浴_\d{8}\.jpg", path)

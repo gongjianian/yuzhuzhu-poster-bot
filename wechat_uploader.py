@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 from datetime import datetime
@@ -80,3 +81,68 @@ def build_cloud_path(category: str, product_name: str) -> str:
     safe_category = _sanitize_path_part(category)
     safe_product_name = _sanitize_path_part(product_name)
     return f"images/{safe_category}/{safe_product_name}_{today}.jpg"
+
+
+def build_material_cloud_path(
+    level1_category_id: str,
+    category_id: str,
+    product_type: str,
+) -> str:
+    today = datetime.now().strftime("%Y%m%d")
+    safe_type = _sanitize_path_part(product_type)
+    return f"materials/{level1_category_id}/{category_id}/{safe_type}_{today}.jpg"
+
+
+def register_material(
+    file_id: str,
+    title: str,
+    category_id: str,
+    level1_category_id: str,
+    product_type: str,
+) -> str:
+    """Insert a material record into the mini-program's materials collection.
+
+    Uses WeChat TCB's databaseadd REST API so no cloud function admin token
+    is needed — only the server access_token from WX_APPID + WX_APPSECRET.
+
+    Returns the inserted document ID.
+    """
+    access_token = get_wx_access_token()
+    env_id = os.getenv("WX_ENV_ID", "")
+    now_ms = int(datetime.now().timestamp() * 1000)
+
+    doc = {
+        "title": title,
+        "fileUrl": file_id,
+        "categoryId": category_id,
+        "level1CategoryId": level1_category_id,
+        "productType": product_type,
+        "type": "image",
+        "fileType": "image",
+        "status": 1,
+        "viewCount": 0,
+        "downloadCount": 0,
+        "sort": 0,
+        "createTime": now_ms,
+        "updateTime": now_ms,
+    }
+
+    response = requests.post(
+        "https://api.weixin.qq.com/tcb/databaseadd",
+        params={"access_token": access_token},
+        json={
+            "env": env_id,
+            "query": f"db.collection('materials').add({{data: {json.dumps(doc, ensure_ascii=False)}}})",
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    payload = response.json()
+
+    if payload.get("errcode", 0) != 0:
+        raise RuntimeError(
+            f"register_material failed: {payload.get('errmsg')} ({payload})"
+        )
+
+    id_list = payload.get("id_list", [])
+    return id_list[0] if id_list else ""
