@@ -54,7 +54,8 @@ def _resolve_copy_model() -> str:
     try:
         from dashboard.services import runtime_settings
         model = runtime_settings.get_copy_model()
-    except Exception:
+    except Exception as exc:
+        logger.debug("runtime_settings unavailable, using env: {}", exc)
         model = os.getenv("GEMINI_COPY_MODEL", "gemini-3.1-pro-preview")
     if model.startswith("models/"):
         model = model[len("models/"):]

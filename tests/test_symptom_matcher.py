@@ -61,7 +61,7 @@ def test_match_caps_products_at_three(mock_build):
     products = _make_products()
     tasks = match_products_to_symptom(category, products)
 
-    assert len(tasks[0].products) <= 3
+    assert len(tasks[0].products) == 3
 
 
 @patch("symptom_matcher._build_client")
