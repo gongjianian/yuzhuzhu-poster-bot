@@ -222,33 +222,134 @@ def _draw_accent_bar(canvas: Image.Image, el: LayoutElement, W: int, H: int) -> 
     canvas.alpha_composite(layer)
 
 
+def _resolve_size_px(raw: float, H: int, min_px: int = 10) -> int:
+    """Convert a `size` field (px int or 0..1 ratio of H) to pixels."""
+    raw = float(raw or 22)
+    if raw < 1.0:
+        return max(min_px, int(round(raw * H)))
+    return max(min_px, int(round(raw)))
+
+
+def _fit_text_to_box(
+    content: str,
+    font_name: str,
+    initial_px: int,
+    max_w_px: int,
+    max_h_px: int,
+    line_spacing: float,
+    min_px: int = 10,
+) -> tuple[ImageFont.FreeTypeFont, list[str], int, int]:
+    """Find the largest font size <= initial_px such that wrapped lines of
+    `content` fit inside a (max_w_px, max_h_px) box.
+
+    max_h_px == 0 disables vertical fitting (returns initial size).
+    Returns: (font, wrapped_lines, line_height_px, chosen_size_px).
+    """
+    size = max(min_px, initial_px)
+    while size >= min_px:
+        font = _resolve_font(font_name, size)
+        lines = _wrap_cjk(content, font, max_w_px)
+        line_h = int(round(size * (line_spacing or 1.4)))
+        if max_h_px == 0 or len(lines) * line_h <= max_h_px:
+            return font, lines, line_h, size
+        size -= 1
+    # Couldn't fit even at minimum size — return min and let caller truncate
+    font = _resolve_font(font_name, min_px)
+    lines = _wrap_cjk(content, font, max_w_px)
+    return font, lines, int(round(min_px * (line_spacing or 1.4))), min_px
+
+
+def _measure_bullet_list_height(
+    items: list[str],
+    body_font: ImageFont.FreeTypeFont,
+    bold_font: ImageFont.FreeTypeFont,
+    bullet: str,
+    wrap_w: int,
+    line_h: int,
+    item_gap: int,
+) -> tuple[int, list[list[str]]]:
+    """Measure total vertical space the bullet list will take. Returns
+    (total_h, list_of_wrapped_items)."""
+    wrapped_all: list[list[str]] = []
+    total = 0
+    for item in items:
+        wrapped = _wrap_cjk(item, body_font, wrap_w)
+        if not wrapped:
+            wrapped_all.append([])
+            continue
+        wrapped_all.append(wrapped)
+        total += len(wrapped) * line_h + item_gap
+    if total > 0:
+        total -= item_gap  # no gap after last item
+    return total, wrapped_all
+
+
+def _fit_bullet_list_to_box(
+    items: list[str],
+    font_name: str,
+    bullet: str,
+    initial_px: int,
+    max_w_px: int,
+    max_h_px: int,
+    line_spacing: float,
+    min_px: int = 10,
+) -> tuple[ImageFont.FreeTypeFont, ImageFont.FreeTypeFont, int, int, list[list[str]], int]:
+    """Find the largest font size such that the bullet list fits in
+    (max_w_px, max_h_px). Returns (body_font, bold_font, line_h, text_x_offset,
+    wrapped_items, chosen_size)."""
+    size = max(min_px, initial_px)
+    while size >= min_px:
+        body_font = _resolve_font(font_name, size)
+        bold_font = _resolve_font("NotoSansSC-Medium", size)
+        line_h = int(round(size * (line_spacing or 1.4)))
+        item_gap = int(round(size * 0.35))
+        bullet_box = bold_font.getbbox(bullet + " ")
+        bullet_w = bullet_box[2] - bullet_box[0]
+        text_x_offset = bullet_w + max(4, int(round(size * 0.25)))
+        wrap_w = max(20, max_w_px - text_x_offset)
+        total_h, wrapped = _measure_bullet_list_height(
+            items, body_font, bold_font, bullet, wrap_w, line_h, item_gap
+        )
+        if max_h_px == 0 or total_h <= max_h_px:
+            return body_font, bold_font, line_h, text_x_offset, wrapped, size
+        size -= 1
+    # Couldn't fit — return min size, caller will truncate
+    body_font = _resolve_font(font_name, min_px)
+    bold_font = _resolve_font("NotoSansSC-Medium", min_px)
+    line_h = int(round(min_px * (line_spacing or 1.4)))
+    bullet_box = bold_font.getbbox(bullet + " ")
+    bullet_w = bullet_box[2] - bullet_box[0]
+    text_x_offset = bullet_w + max(4, int(round(min_px * 0.25)))
+    wrap_w = max(20, max_w_px - text_x_offset)
+    _, wrapped = _measure_bullet_list_height(
+        items, body_font, bold_font, bullet, wrap_w, line_h, int(round(min_px * 0.35))
+    )
+    return body_font, bold_font, line_h, text_x_offset, wrapped, min_px
+
+
 def _draw_text_block(canvas: Image.Image, el: LayoutElement, W: int, H: int) -> None:
     if not el.content:
         return
     x = int(_clamp(el.x) * W)
     y = int(_clamp(el.y) * H)
     max_w_px = max(20, int(_clamp(el.max_w, 0.05, 1.0) * W))
+    max_h_px = int(_clamp(el.max_h, 0.0, 1.0) * H) if el.max_h > 0 else 0
 
-    # Convert size: AI may return px directly, or a fractional value < 1
-    # interpreted as ratio of poster height. Treat anything < 1 as ratio.
-    raw_size = float(el.size or 22)
-    if raw_size < 1.0:
-        size_px = max(10, int(raw_size * H))
-    else:
-        size_px = max(10, int(raw_size))
+    initial_px = _resolve_size_px(el.size, H)
+    font, lines, line_h, _ = _fit_text_to_box(
+        el.content, el.font, initial_px, max_w_px, max_h_px,
+        float(el.line_spacing or 1.4),
+    )
 
-    font = _resolve_font(el.font, size_px)
     rgb = _hex_to_rgb(el.color)
     alpha = _alpha(el.opacity)
-
-    lines = _wrap_cjk(el.content, font, max_w_px)
-    line_h = int(size_px * float(el.line_spacing or 1.4))
 
     layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
     cy = y
+    bottom = (y + max_h_px) if max_h_px > 0 else H
     for line in lines:
-        if cy >= H:
+        if cy + line_h > bottom:
             break
         bbox = font.getbbox(line)
         line_w = bbox[2] - bbox[0]
@@ -269,46 +370,209 @@ def _draw_bullet_list(canvas: Image.Image, el: LayoutElement, W: int, H: int) ->
     x = int(_clamp(el.x) * W)
     y = int(_clamp(el.y) * H)
     max_w_px = max(20, int(_clamp(el.max_w, 0.05, 1.0) * W))
+    max_h_px = int(_clamp(el.max_h, 0.0, 1.0) * H) if el.max_h > 0 else 0
 
-    raw_size = float(el.size or 22)
-    if raw_size < 1.0:
-        size_px = max(10, int(raw_size * H))
-    else:
-        size_px = max(10, int(raw_size))
+    initial_px = _resolve_size_px(el.size, H)
+    bullet = el.bullet or "·"
+    body_font, bold_font, line_h, text_x_offset, wrapped_items, chosen = _fit_bullet_list_to_box(
+        list(el.items), el.font, bullet, initial_px, max_w_px, max_h_px,
+        float(el.line_spacing or 1.4),
+    )
 
-    font = _resolve_font(el.font, size_px)
-    bold_font = _resolve_font("NotoSansSC-Medium", size_px)
     rgb = _hex_to_rgb(el.color)
     alpha = _alpha(el.opacity)
-    line_h = int(size_px * float(el.line_spacing or 1.4))
-
-    bullet = el.bullet or "·"
-    bullet_box = bold_font.getbbox(bullet + " ")
-    bullet_w = bullet_box[2] - bullet_box[0]
-    text_x_offset = bullet_w + max(4, int(size_px * 0.25))
-    wrap_w = max(20, max_w_px - text_x_offset)
+    item_gap = int(round(chosen * 0.35))
+    bottom = (y + max_h_px) if max_h_px > 0 else H
 
     layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
     cy = y
-    for item in el.items:
-        if cy >= H:
-            break
-        wrapped = _wrap_cjk(item, font, wrap_w)
+    for wrapped in wrapped_items:
         if not wrapped:
             continue
+        if cy + line_h > bottom:
+            break
         # First line: bullet + first chunk
         draw.text((x, cy), bullet, font=bold_font, fill=(*rgb, alpha))
-        draw.text((x + text_x_offset, cy), wrapped[0], font=font, fill=(*rgb, alpha))
+        draw.text((x + text_x_offset, cy), wrapped[0], font=body_font, fill=(*rgb, alpha))
         cy += line_h
         # Continuation lines (indented)
+        overflow = False
         for cont in wrapped[1:]:
-            if cy >= H:
+            if cy + line_h > bottom:
+                overflow = True
                 break
-            draw.text((x + text_x_offset, cy), cont, font=font, fill=(*rgb, alpha))
+            draw.text((x + text_x_offset, cy), cont, font=body_font, fill=(*rgb, alpha))
             cy += line_h
-        # Inter-item gap
-        cy += int(size_px * 0.35)
+        if overflow:
+            break
+        cy += item_gap
+    canvas.alpha_composite(layer)
+
+
+# ---------- card (compound element: panel + heading + bullets, auto-fit) ----------
+
+
+def _draw_card(canvas: Image.Image, el: LayoutElement, W: int, H: int) -> None:
+    """Draw a complete text card: rounded background + optional accent bar +
+    optional heading + items list. The renderer measures the text and shrinks
+    the font until everything fits inside (w, h), so the visible panel ALWAYS
+    contains the text — no AI coordination required.
+    """
+    x = int(_clamp(el.x) * W)
+    y = int(_clamp(el.y) * H)
+    w = int(_clamp(el.w) * W)
+    h = int(_clamp(el.h) * H)
+    if w <= 0 or h <= 0:
+        return
+
+    bg_rgb = _hex_to_rgb(el.fill)
+    bg_alpha = _alpha(el.opacity if el.opacity > 0 else 0.92)
+    radius = max(0, int(el.radius))
+
+    # ---- Step 1: shadow + background panel ----
+    if el.shadow:
+        from PIL import ImageFilter
+        shadow_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        sd = ImageDraw.Draw(shadow_layer)
+        offset = max(2, int(min(w, h) * 0.02))
+        if radius > 0:
+            sd.rounded_rectangle(
+                [x + offset, y + offset, x + w + offset, y + h + offset],
+                radius=radius,
+                fill=(0, 0, 0, int(bg_alpha * 0.35)),
+            )
+        else:
+            sd.rectangle(
+                [x + offset, y + offset, x + w + offset, y + h + offset],
+                fill=(0, 0, 0, int(bg_alpha * 0.35)),
+            )
+        shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=offset))
+        canvas.alpha_composite(shadow_layer)
+
+    bg_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    bd = ImageDraw.Draw(bg_layer)
+    if radius > 0:
+        bd.rounded_rectangle([x, y, x + w, y + h], radius=radius, fill=(*bg_rgb, bg_alpha))
+    else:
+        bd.rectangle([x, y, x + w, y + h], fill=(*bg_rgb, bg_alpha))
+    canvas.alpha_composite(bg_layer)
+
+    # ---- Step 2: optional accent bar (left side) ----
+    accent_w = 0
+    if el.accent_color:
+        accent_w = max(3, int(round(w * 0.012)))
+        accent_rgb = _hex_to_rgb(el.accent_color)
+        ac_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        ImageDraw.Draw(ac_layer).rectangle(
+            [x, y, x + accent_w, y + h],
+            fill=(*accent_rgb, 255),
+        )
+        canvas.alpha_composite(ac_layer)
+
+    # ---- Step 3: layout text inside the inner box ----
+    pad = max(12, int(round(min(w, h) * float(el.padding or 0.08))))
+    inner_x = x + pad + (accent_w + 6 if accent_w else 0)
+    inner_y = y + pad
+    inner_w = w - pad - (pad + (accent_w + 6 if accent_w else 0))
+    inner_h = h - 2 * pad
+    if inner_w <= 0 or inner_h <= 0:
+        return
+
+    text_rgb = _hex_to_rgb(el.color)
+    text_alpha = 255  # text on top of panel — always opaque
+    line_spacing = float(el.line_spacing or 1.4)
+
+    has_heading = bool(el.heading and el.heading.strip())
+    has_items = bool(el.items)
+
+    # Reserve heading area first (target ~30% of inner_h if both present)
+    heading_h_target = 0
+    body_h_target = inner_h
+    if has_heading and has_items:
+        heading_h_target = int(inner_h * 0.30)
+        body_h_target = inner_h - heading_h_target - max(6, int(inner_h * 0.04))
+    elif has_heading:
+        heading_h_target = inner_h
+        body_h_target = 0
+
+    # Fit heading
+    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    cy = inner_y
+
+    if has_heading:
+        h_initial = _resolve_size_px(el.heading_size, H)
+        h_font, h_lines, h_line_h, h_size = _fit_text_to_box(
+            el.heading, "NotoSansSC-Medium", h_initial, inner_w, heading_h_target,
+            line_spacing,
+        )
+        h_bottom = inner_y + heading_h_target
+        for line in h_lines:
+            if cy + h_line_h > h_bottom:
+                break
+            draw.text((inner_x, cy), line, font=h_font, fill=(*text_rgb, text_alpha))
+            cy += h_line_h
+        # Underline separator
+        sep_y = cy + max(2, int(h_size * 0.15))
+        draw.line(
+            [(inner_x, sep_y), (inner_x + inner_w, sep_y)],
+            fill=(*text_rgb, 110),
+            width=max(1, int(h_size * 0.08)),
+        )
+        cy = sep_y + max(6, int(h_size * 0.30))
+        # Recompute body box from current cy
+        body_h_target = max(0, (y + h - pad) - cy)
+
+    # Fit + draw bullet items
+    if has_items and body_h_target > 0:
+        b_initial = _resolve_size_px(el.body_size, H)
+        bullet = el.bullet or "·"
+        body_font, bold_font, b_line_h, text_x_offset, wrapped_items, b_size = _fit_bullet_list_to_box(
+            list(el.items), "NotoSansSC-Regular", bullet, b_initial,
+            inner_w, body_h_target, line_spacing,
+        )
+        item_gap = int(round(b_size * 0.35))
+        bottom = inner_y + (heading_h_target + max(6, int(inner_h * 0.04)) if has_heading else 0) + body_h_target
+        for wrapped in wrapped_items:
+            if not wrapped:
+                continue
+            if cy + b_line_h > bottom:
+                break
+            draw.text((inner_x, cy), bullet, font=bold_font, fill=(*text_rgb, text_alpha))
+            draw.text(
+                (inner_x + text_x_offset, cy), wrapped[0],
+                font=body_font, fill=(*text_rgb, text_alpha),
+            )
+            cy += b_line_h
+            overflow = False
+            for cont in wrapped[1:]:
+                if cy + b_line_h > bottom:
+                    overflow = True
+                    break
+                draw.text(
+                    (inner_x + text_x_offset, cy), cont,
+                    font=body_font, fill=(*text_rgb, text_alpha),
+                )
+                cy += b_line_h
+            if overflow:
+                break
+            cy += item_gap
+    elif has_items and body_h_target == 0:
+        # Heading-only card got all the space; nothing more to draw
+        pass
+    elif not has_heading and not has_items and el.content:
+        # Card used as a plain text panel
+        c_initial = _resolve_size_px(el.body_size, H)
+        c_font, c_lines, c_line_h, _ = _fit_text_to_box(
+            el.content, el.font, c_initial, inner_w, inner_h, line_spacing,
+        )
+        for line in c_lines:
+            if cy + c_line_h > inner_y + inner_h:
+                break
+            draw.text((inner_x, cy), line, font=c_font, fill=(*text_rgb, text_alpha))
+            cy += c_line_h
+
     canvas.alpha_composite(layer)
 
 
@@ -326,6 +590,7 @@ def _draw_divider(canvas: Image.Image, el: LayoutElement, W: int, H: int) -> Non
 
 
 _RENDERERS = {
+    "card": _draw_card,
     "rounded_rect": _draw_rounded_rect,
     "accent_bar": _draw_accent_bar,
     "text": _draw_text_block,
@@ -386,60 +651,33 @@ def _build_fallback_layout(
     fallback_zone: SmallTextZone | None = None,
 ) -> LayoutSpec:
     """Build a minimal LayoutSpec used when the vision call fails or
-    returns garbage. Mimics the old card-style overlay so the poster
-    still gets *some* readable text rather than nothing."""
+    returns garbage. Uses a single `card` element so the renderer
+    auto-fits text to the panel — guaranteed visual coherence."""
     z = fallback_zone or SmallTextZone()
-    elements: list[LayoutElement] = []
-    # Background panel
-    elements.append(
-        LayoutElement(
-            type="rounded_rect",
-            x=z.x_ratio,
-            y=z.y_ratio,
-            w=z.width_ratio,
-            h=z.height_ratio,
-            fill=z.bg_color,
-            opacity=0.92,
-            radius=24,
-            shadow=False,
-        )
-    )
-    pad = 0.025
-    inner_x = z.x_ratio + pad
-    inner_y = z.y_ratio + pad
-    inner_w = max(0.05, z.width_ratio - 2 * pad)
-    cy = inner_y
-    if heading:
-        elements.append(
+    return LayoutSpec(
+        elements=[
             LayoutElement(
-                type="text",
-                x=inner_x,
-                y=cy,
-                max_w=inner_w,
-                content=heading,
-                font="NotoSansSC-Medium",
-                size=0.034,  # ratio of H
+                type="card",
+                x=z.x_ratio,
+                y=z.y_ratio,
+                w=z.width_ratio,
+                h=z.height_ratio,
+                fill=z.bg_color,
+                opacity=0.92,
+                radius=24,
+                shadow=False,
+                accent_color="",
+                heading=heading or "",
+                items=list(body_copy or []),
                 color=z.text_color,
-                weight="bold",
-            )
-        )
-        cy += 0.055
-    if body_copy:
-        elements.append(
-            LayoutElement(
-                type="bullet_list",
-                x=inner_x,
-                y=cy,
-                max_w=inner_w,
-                items=list(body_copy),
-                bullet="·",
-                font="NotoSansSC-Regular",
-                size=0.024,
-                color=z.text_color,
+                heading_size=0.032,
+                body_size=0.022,
+                padding=0.08,
                 line_spacing=1.45,
             )
-        )
-    return LayoutSpec(elements=elements, reasoning="fallback (vision unavailable)")
+        ],
+        reasoning="fallback (vision unavailable)",
+    )
 
 
 def analyze_layout_with_vision(
@@ -486,90 +724,129 @@ def analyze_layout_with_vision(
 - 小字要点（{len(body_copy)} 条）:
 {bullet_lines}
 
+## ⭐ 核心规则：用 "card" 元素，让渲染器对齐
+**最重要的事**：你**首选** `card` 元素类型。`card` 是一个复合元素，包含 `背景面板 + 标题 + 列表`，**渲染器会自动处理对齐和字号缩放**，保证文字一定在面板内，不会溢出。
+
+**❌ 不要做的事**：不要再用 `rounded_rect` + 单独的 `text` + `bullet_list` 三个元素手动拼装！那样需要你自己计算每个元素的 x/y/w/h 来对齐，**几乎一定会出错**（文字溢出面板、位置错位）。
+
+**✅ 正确做法**：返回一个 `card` 元素，写好 x/y/w/h/fill/heading/items 就完事，对齐交给渲染器。
+
 ## 输出格式（严格 JSON，无 markdown 无解释）
-返回一个 LayoutSpec 对象，elements 是一个有序的绘制元素列表。后画的元素覆盖先画的，所以背景面板要排在前面。
 
 ```json
 {{
   "reasoning": "一句话说明你为什么这样设计",
   "elements": [
     {{
-      "type": "rounded_rect | accent_bar | text | bullet_list | divider",
-      "x": 0.0-1.0, "y": 0.0-1.0, "w": 0.0-1.0, "h": 0.0-1.0,
-      "fill": "#RRGGBB", "opacity": 0.0-1.0,
-      "radius": 0-40, "shadow": true/false,
-      "content": "(text 类型)",
-      "items": ["(bullet_list 类型)"],
-      "bullet": "·",
-      "max_w": 0.0-1.0,
-      "font": "NotoSansSC-Medium 或 NotoSansSC-Regular",
-      "size": "可以填像素整数 (12-80)，也可以填占海报高度的比例 (0.01-0.06)",
-      "color": "#RRGGBB",
-      "align": "left | center | right",
-      "line_spacing": 1.2-1.8,
-      "stroke_width": 1-4,
-      "x2": 0.0-1.0, "y2": 0.0-1.0
+      "type": "card",
+      "x": 0.0-1.0, "y": 0.0-1.0,
+      "w": 0.0-1.0, "h": 0.0-1.0,
+      "fill": "#RRGGBB",
+      "opacity": 0.0-1.0,
+      "radius": 0-40,
+      "shadow": true/false,
+      "accent_color": "#RRGGBB 或留空",
+      "heading": "可选标题文字",
+      "items": ["要点1", "要点2", ...],
+      "color": "#RRGGBB（文字颜色）",
+      "heading_size": 0.025-0.040,
+      "body_size": 0.018-0.028,
+      "padding": 0.05-0.12,
+      "line_spacing": 1.3-1.6
     }}
   ]
 }}
 ```
 
-## 元素类型字段说明
-- **rounded_rect**: 用 x/y/w/h/fill/opacity/radius/shadow。背景面板，比如半透明卡片。
-- **accent_bar**: 用 x/y/w/h/fill/opacity。细装饰条，比如左边一道竖线，或标题下面一根横线。
-- **text**: 用 x/y/max_w/content/font/size/color/align/line_spacing。单段文本。会按 max_w 自动换行。
-- **bullet_list**: 用 x/y/max_w/items/bullet/font/size/color/line_spacing。多条要点列表。
-- **divider**: 用 x/y/x2/y2/fill/opacity/stroke_width。两点之间的直线。
+## card 字段详解
+- `x, y`: 卡片左上角位置（占海报宽/高的比例 0-1）
+- `w, h`: 卡片宽和高（比例 0-1）。**这就是你要做的全部尺寸决策** —— 字号会自动缩放
+- `fill`: 卡片背景色。透明白 `#FFFFFF` opacity 0.85；纯色卡 opacity 0.95
+- `opacity`: 0.85-0.95 之间最常用。复杂背景上用 0.92+ 保可读性
+- `radius`: 圆角，常用 12-24
+- `shadow`: true 加柔和阴影（适合浮在产品上方）
+- `accent_color`: 留空就是普通卡片；填颜色会在左侧加一道竖线（品牌色或对比色）
+- `heading`: 可选小标题（2-4 字最佳，例如"产品亮点"、"核心成分"、"使用场景"）
+- `items`: 要点数组，**直接复制我上面给你的内容**
+- `color`: 文字颜色，要和 `fill` 形成强对比
+- `heading_size` / `body_size`: 起始字号（占海报高度的比例）。**你不用算精确值** —— 渲染器会自动缩小字号让所有文字塞进卡片里
+- `padding`: 内边距比例，0.06-0.10 最常用
 
-## 设计原则（按优先级，非常重要）
-1. **不要遮挡产品**：先看产品在画面里的位置，避开它。
-2. **靠近主标题或副标题，形成视觉一组**：小字不能孤立漂浮在远处。
-3. **挑画面最干净的区域**：通常是背景留白处。如果留白本身已经很干净（颜色均匀），可以**直接漂字不加背景面板**；如果留白纹理复杂或对比度不足，就**加一层半透明 rounded_rect 作为底**。
-4. **颜色取自画面本身**：背景色取自该区域的实际主色（略偏亮/偏暗以保证对比），文字色与背景对比强烈。
-5. **创意自由**：你可以加 accent_bar（左侧竖线/底部横线）或 divider 来分割段落，让设计有层次感。
-6. **风格呼应整体海报**：如果海报偏极简风，就少加修饰元素；如果海报偏华丽风，可以加渐变背景和装饰条。
-7. **size 字段可以用像素或比例两种写法**。比例更方便（例如 size: 0.028 表示字号 = 海报高度的 2.8%）。正文小字一般 0.02-0.028，标题 0.03-0.04。
-8. **保持小字块紧凑**：不要让 bullet_list 太散，line_spacing 通常 1.4-1.5。
+## 设计原则（按优先级）
+1. **不要遮挡产品和标题** —— 先看产品在画面里的位置，避开它
+2. **靠近主标题或副标题，形成视觉一组** —— 卡片不能孤立漂浮在远处
+3. **挑画面最干净的区域** —— 通常是背景留白处
+4. **卡片尺寸建议**：宽 35%-50%、高 25%-40%。根据画面留白形状调整
+5. **颜色取自画面本身**：fill 取背景区域的实际主色（略亮或略暗以保证对比），color 与 fill 强对比
+6. **风格呼应整体海报**：极简风用浅色透明卡 + 无 accent_bar；复古/中式可加 accent_color；深色背景用深色卡 + 浅文字
+7. **不确定就用单个 card** —— 不要返回多个元素叠加
 
-## 设计示例
+## 设计示例（**全部用 card**）
 
-**示例 A — 极简浮字（用于干净背景）**
+**示例 A — 浅色透明卡（适合大多数情况）**
 ```json
 {{
-  "reasoning": "海报右下大块留白且色彩均匀，无需背景板，字直接浮在上面更简洁",
+  "reasoning": "海报左下大块米色留白，用半透明白卡和棕色文字，简洁大方",
   "elements": [
-    {{"type": "accent_bar", "x": 0.55, "y": 0.65, "w": 0.003, "h": 0.20, "fill": "#8B4513", "opacity": 1.0}},
-    {{"type": "text", "x": 0.57, "y": 0.65, "max_w": 0.40, "content": "产品亮点", "font": "NotoSansSC-Medium", "size": 0.032, "color": "#3A2C1F"}},
-    {{"type": "bullet_list", "x": 0.57, "y": 0.71, "max_w": 0.40, "items": ["..."], "font": "NotoSansSC-Regular", "size": 0.024, "color": "#3A2C1F"}}
+    {{
+      "type": "card",
+      "x": 0.05, "y": 0.60, "w": 0.45, "h": 0.34,
+      "fill": "#FAFAF5", "opacity": 0.92, "radius": 20, "shadow": true,
+      "accent_color": "",
+      "heading": "产品亮点",
+      "items": ["天然艾草精萃，温和不刺激", "深层祛湿驱寒", "孕妇可用，宝宝可用"],
+      "color": "#3A2C1F",
+      "heading_size": 0.032, "body_size": 0.024, "padding": 0.08
+    }}
   ]
 }}
 ```
 
-**示例 B — 半透明卡片（用于复杂背景）**
+**示例 B — 深色背景上的浅卡 + 品牌色装饰条**
 ```json
 {{
-  "reasoning": "海报左下背景纹理复杂，需要半透明白卡保证可读性",
+  "reasoning": "海报背景偏深棕，用米黄底卡 + 深棕文字 + 左侧砖红装饰条",
   "elements": [
-    {{"type": "rounded_rect", "x": 0.05, "y": 0.62, "w": 0.45, "h": 0.32, "fill": "#FAFAF5", "opacity": 0.92, "radius": 20, "shadow": true}},
-    {{"type": "text", "x": 0.075, "y": 0.645, "max_w": 0.40, "content": "核心成分", "font": "NotoSansSC-Medium", "size": 0.030, "color": "#2D3A2D"}},
-    {{"type": "divider", "x": 0.075, "y": 0.69, "x2": 0.475, "y2": 0.69, "fill": "#2D3A2D", "opacity": 0.4, "stroke_width": 1}},
-    {{"type": "bullet_list", "x": 0.075, "y": 0.71, "max_w": 0.40, "items": ["..."], "font": "NotoSansSC-Regular", "size": 0.024, "color": "#2D3A2D"}}
+    {{
+      "type": "card",
+      "x": 0.52, "y": 0.62, "w": 0.43, "h": 0.32,
+      "fill": "#F5EDD8", "opacity": 0.95, "radius": 16, "shadow": true,
+      "accent_color": "#8B3A1F",
+      "heading": "核心成分",
+      "items": ["..."],
+      "color": "#3A2014",
+      "heading_size": 0.034, "body_size": 0.024, "padding": 0.09
+    }}
   ]
 }}
 ```
 
-**示例 C — 顶部横幅**
+**示例 C — 顶部横幅式 card**
 ```json
 {{
-  "reasoning": "海报顶部有大块天空留白，把要点做成横幅式排版",
+  "reasoning": "海报顶部有大块天空留白，用横向窄高比 card 做成横幅",
   "elements": [
-    {{"type": "rounded_rect", "x": 0.08, "y": 0.06, "w": 0.84, "h": 0.10, "fill": "#1A2B3C", "opacity": 0.85, "radius": 8}},
-    {{"type": "text", "x": 0.10, "y": 0.085, "max_w": 0.80, "content": "产品亮点 / 三大优势", "font": "NotoSansSC-Medium", "size": 0.028, "color": "#F5E6CA", "align": "center"}}
+    {{
+      "type": "card",
+      "x": 0.08, "y": 0.06, "w": 0.84, "h": 0.16,
+      "fill": "#1A2B3C", "opacity": 0.88, "radius": 12, "shadow": false,
+      "accent_color": "#D4A95C",
+      "heading": "三大功效",
+      "items": ["..."],
+      "color": "#F5E6CA",
+      "heading_size": 0.028, "body_size": 0.020, "padding": 0.06
+    }}
   ]
 }}
 ```
 
-现在请直接看图，输出 JSON。只返回 JSON。"""
+## ⚠️ 关键约束（违反会被拒绝）
+- **必须**返回 `card` 类型的元素（除非你有非常充分的理由用别的）
+- **绝不要**返回多个独立的 `rounded_rect` + `text` + `bullet_list` 元素
+- 卡片的 x+w 不能超过 1.0；y+h 不能超过 1.0
+- items 直接复制我给你的列表，不要改写
+
+现在请直接看图，输出一个 card 元素的 JSON。只返回 JSON。"""
 
         endpoint = _build_endpoint(model)
         img_b64 = base64.b64encode(poster_bytes).decode("utf-8")
@@ -754,6 +1031,16 @@ def _classify_error(status_code: int, body_text: str, body_data: dict | None) ->
     )
 
 
+def _image_size_config(model: str) -> dict:
+    """Return optional imageConfig only for models that support imageSize."""
+    model_lower = (model or "").lower()
+    if not model_lower.startswith("gemini-3-pro-image"):
+        return {}
+    if "4k" in model_lower:
+        return {"imageConfig": {"imageSize": "4K"}}
+    return {"imageConfig": {"imageSize": "2K"}}
+
+
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=2, min=5, max=60),
@@ -795,6 +1082,7 @@ def generate_poster_image(image_prompt: str, product_image_b64: str) -> bytes:
         "contents": [{"role": "user", "parts": parts}],
         "generationConfig": {
             "responseModalities": ["IMAGE", "TEXT"],
+            **_image_size_config(model),
         },
     }
 

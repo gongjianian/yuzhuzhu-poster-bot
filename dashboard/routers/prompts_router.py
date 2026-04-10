@@ -31,7 +31,7 @@ ALLOWED_PROMPTS = {
     "image_prompt.txt": {
         "name": "image_prompt.txt",
         "title": "视觉翻译 Prompt",
-        "description": "第二阶段：将方案翻译为图像生成模型的 prompt（小字 body_copy 由后期 PIL 根据实际图像动态叠加）",
+        "description": "第二阶段：将方案翻译为图像生成模型的 prompt，并让 Gemini 在出图时原生渲染所有文字元素",
         "placeholders": [
             "{store_name}",
             "{size}",
@@ -40,6 +40,7 @@ ALLOWED_PROMPTS = {
             "{product_name}",
             "{headline}",
             "{subheadline}",
+            "{body_copy}",
             "{cta}",
             "{scene_description}",
             "{layout_description}",
@@ -219,8 +220,6 @@ async def test_image_prompt(
 class ImageTestRequest(BaseModel):
     record_id: str
     image_prompt: str  # Output from test/image-prompt
-    # Scheme from test/scheme — used to overlay body_copy text with PIL
-    scheme: dict[str, Any] | None = None
 
 
 class ImageTestResponse(BaseModel):
@@ -242,20 +241,14 @@ async def test_image(
     """Stage 3: run rembg + actual Gemini image generation using the provided
     image_prompt (from /test/image-prompt) and the record's product asset.
 
-    If scheme is provided, also applies PIL body_copy text overlay using
-    the CJK font, matching the production pipeline behavior.
-
     Does NOT run QC, does NOT upload to WeChat, does NOT touch Feishu status.
+    Gemini natively renders all text from the Stage 2 prompt, so there is no
+    post-generation overlay step here.
     Returns the generated image as base64 for browser preview.
     """
     import os as _os
     from asset_processor import process_product_image
-    from image_generator import (
-        analyze_layout_with_vision,
-        apply_layout,
-        generate_poster_image,
-    )
-    from content_generator import _parse_small_text_zone
+    from image_generator import generate_poster_image
 
     record = await _locate_record(body.record_id)
     if not record.asset_filename:
@@ -298,41 +291,7 @@ async def test_image(
             error=f"image_generation failed: {type(e).__name__}: {e}",
         )
 
-    # Optional: vision-based layout design + PIL render (matches pipeline)
     overlay_ms = 0
-    if body.scheme:
-        overlay_start = time.time()
-        try:
-            fallback_zone = _parse_small_text_zone(body.scheme)
-            body_copy = body.scheme.get("body_copy") or []
-            if body_copy:
-                # Vision AI designs a full LayoutSpec for this specific image
-                layout_spec = await asyncio.to_thread(
-                    analyze_layout_with_vision,
-                    poster_bytes,
-                    body_copy,
-                    fallback_zone.heading,
-                    fallback_zone,
-                )
-                poster_bytes = await asyncio.to_thread(
-                    apply_layout,
-                    poster_bytes,
-                    layout_spec,
-                )
-            overlay_ms = int((time.time() - overlay_start) * 1000)
-        except Exception as e:
-            # Overlay failure is non-fatal — return the base image
-            overlay_ms = int((time.time() - overlay_start) * 1000)
-            return ImageTestResponse(
-                product_name=record.product_name,
-                image_b64=base64.b64encode(poster_bytes).decode("utf-8"),
-                image_size_bytes=len(poster_bytes),
-                asset_process_ms=asset_ms,
-                image_gen_ms=gen_ms,
-                overlay_ms=overlay_ms,
-                total_ms=int((time.time() - total_start) * 1000),
-                error=f"body_text_overlay failed: {type(e).__name__}: {e}",
-            )
 
     return ImageTestResponse(
         product_name=record.product_name,

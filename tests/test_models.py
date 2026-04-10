@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from models import PosterScheme, ProductRecord, QCResult
+from models import PosterScheme, ProductRecord, QCResult, CategoryPosterTask
 
 
 def test_product_record_valid() -> None:
@@ -51,3 +51,28 @@ def test_qc_result_failed() -> None:
     assert result.passed is False
     assert result.issues == ["Logo distorted", "Text unreadable"]
     assert result.confidence == 0.35
+
+
+def test_product_record_has_product_line():
+    from models import ProductRecord
+    r = ProductRecord(record_id="r1", product_name="鸡内金泡浴")
+    assert r.product_line == "未知产品线"
+
+
+def test_product_record_product_line_set():
+    from models import ProductRecord
+    r = ProductRecord(record_id="r1", product_name="鸡内金泡浴", product_line="五行泡浴")
+    assert r.product_line == "五行泡浴"
+
+
+def test_category_poster_task_model():
+    from models import CategoryPosterTask
+    task = CategoryPosterTask(
+        category_id="cat_pw_jstl",
+        level1_category_id="cat_piwei",
+        category_name="积食停滞类",
+        product_line="五行泡浴",
+        products=[],
+    )
+    assert task.category_id == "cat_pw_jstl"
+    assert task.product_line == "五行泡浴"
