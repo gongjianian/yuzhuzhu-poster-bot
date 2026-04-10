@@ -1037,8 +1037,8 @@ def _image_size_config(model: str) -> dict:
     if not model_lower.startswith("gemini-3-pro-image"):
         return {}
     if "4k" in model_lower:
-        return {"imageConfig": {"imageSize": "4K"}}
-    return {"imageConfig": {"imageSize": "2K"}}
+        return {"imageConfig": {"imageSize": "4K", "aspectRatio": "3:4"}}
+    return {"imageConfig": {"imageSize": "2K", "aspectRatio": "3:4"}}
 
 
 @retry(
