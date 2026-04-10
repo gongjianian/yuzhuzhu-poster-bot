@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from sqlalchemy import Integer, func
 from sqlalchemy.orm import Session
 
 from dashboard.db_models import CategoryRunRecord
