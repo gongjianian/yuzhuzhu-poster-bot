@@ -100,3 +100,40 @@ class LogResponse(BaseModel):
     date: str
     total_lines: int
     lines: list[LogEntry]
+
+
+class CategoryTaskItem(BaseModel):
+    id: int
+    category_id: str
+    category_name: str
+    level1_name: str
+    product_line: str
+    products: list[str]
+    status: str
+    step: str
+    headline: str
+    cloud_file_id: str
+    material_id: str
+    error_msg: str
+    duration_seconds: Optional[float]
+    started_at: Optional[str]
+    finished_at: Optional[str]
+
+
+class CategoryBatchDetail(BaseModel):
+    batch_id: str
+    status: str = ""
+    tasks: list[CategoryTaskItem]
+
+
+class CategoryBatchSummary(BaseModel):
+    batch_id: str
+    started_at: Optional[str]
+    total: int
+    done: int
+    failed: int
+    running: int
+
+
+class CategoryBatchListResponse(BaseModel):
+    items: list[CategoryBatchSummary]

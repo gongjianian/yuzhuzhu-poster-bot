@@ -46,10 +46,13 @@ def create_app() -> FastAPI:
     )
 
     from dashboard.routers.auth_router import router as auth_router
+    from dashboard.routers.category_runs_router import router as category_runs_router
     from dashboard.routers.health_router import router as health_router
     from dashboard.routers.logs_router import router as logs_router
     from dashboard.routers.pipeline_router import router as pipeline_router
+    from dashboard.routers.prompts_router import router as prompts_router
     from dashboard.routers.runs_router import router as runs_router
+    from dashboard.routers.settings_router import router as settings_router
     from dashboard.routers.stats_router import router as stats_router
     from dashboard.routers.tasks_router import router as tasks_router
 
@@ -57,9 +60,12 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(logs_router)
     app.include_router(pipeline_router)
+    app.include_router(prompts_router)
     app.include_router(runs_router)
+    app.include_router(settings_router)
     app.include_router(stats_router)
     app.include_router(tasks_router)
+    app.include_router(category_runs_router)
 
     static_dir = Path(__file__).parent.parent / "static"
     static_assets_dir = static_dir / "assets"
