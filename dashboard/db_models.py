@@ -39,3 +39,24 @@ class DailyStats(Base):
     success: Mapped[int] = mapped_column(Integer, default=0)
     failed: Mapped[int] = mapped_column(Integer, default=0)
     avg_duration: Mapped[float] = mapped_column(Float, default=0.0)
+
+
+class CategoryRunRecord(Base):
+    __tablename__ = "category_run_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    batch_id: Mapped[str] = mapped_column(String(64), index=True)
+    category_id: Mapped[str] = mapped_column(String(64))
+    category_name: Mapped[str] = mapped_column(String(100))
+    level1_name: Mapped[str] = mapped_column(String(100), default="")
+    product_line: Mapped[str] = mapped_column(String(50), default="")
+    products_json: Mapped[str] = mapped_column(Text, default="[]")
+    status: Mapped[str] = mapped_column(String(20), index=True, default="PENDING")
+    step: Mapped[str] = mapped_column(String(20), default="matching")
+    headline: Mapped[str] = mapped_column(String(500), default="")
+    cloud_file_id: Mapped[str] = mapped_column(String(500), default="")
+    material_id: Mapped[str] = mapped_column(String(200), default="")
+    error_msg: Mapped[str] = mapped_column(Text, default="")
+    duration_seconds: Mapped[float] = mapped_column(Float, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    finished_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
