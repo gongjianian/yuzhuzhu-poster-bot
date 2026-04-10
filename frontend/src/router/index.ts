@@ -38,6 +38,12 @@ const router = createRouter({
           meta: { title: '执行记录' }
         },
         {
+          path: 'category-runs',
+          name: 'category-runs',
+          component: () => import('../views/CategoryRunsView.vue'),
+          meta: { title: '分类海报' }
+        },
+        {
           path: 'logs',
           name: 'logs',
           component: () => import('../views/LogsView.vue'),
@@ -48,6 +54,12 @@ const router = createRouter({
           name: 'health',
           component: () => import('../views/HealthView.vue'),
           meta: { title: '健康监测' }
+        },
+        {
+          path: 'prompts',
+          name: 'prompts',
+          component: () => import('../views/PromptsView.vue'),
+          meta: { title: 'Prompt 设置' }
         }
       ]
     }

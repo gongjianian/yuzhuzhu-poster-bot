@@ -20,6 +20,10 @@
           <el-icon><List /></el-icon>
           <span>任务管理</span>
         </el-menu-item>
+        <el-menu-item index="/category-runs">
+          <el-icon><Picture /></el-icon>
+          <span>分类海报</span>
+        </el-menu-item>
         <el-menu-item index="/runs">
           <el-icon><Timer /></el-icon>
           <span>执行记录</span>
@@ -31,6 +35,10 @@
         <el-menu-item index="/health">
           <el-icon><Monitor /></el-icon>
           <span>健康监测</span>
+        </el-menu-item>
+        <el-menu-item index="/prompts">
+          <el-icon><Edit /></el-icon>
+          <span>Prompt 设置</span>
         </el-menu-item>
       </el-menu>
     </el-aside>

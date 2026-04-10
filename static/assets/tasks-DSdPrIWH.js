@@ -1,0 +1,1 @@
+import{t as e}from"./request-BBsrUQEn.js";function t(t){return e.get(`/tasks`,{params:t})}function n(t){return e.post(`/tasks/${t}/trigger`)}function r(t){return e.post(`/tasks/batch-trigger`,t)}export{r as n,n as r,t};

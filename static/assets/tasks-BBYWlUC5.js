@@ -1,0 +1,1 @@
+import"./_plugin-vue_export-helper-ChA1HKyq.js";import{t as e}from"./request-D_l52T06.js";import"./css-DvdwTuz9.js";function t(t){return e.get(`/tasks`,{params:t})}function n(t){return e.post(`/tasks/${t}/trigger`)}function r(t){return e.post(`/tasks/batch-trigger`,t)}export{r as n,n as r,t};
