@@ -7,8 +7,6 @@ os.environ["DASHBOARD_ADMIN_USER"] = "admin"
 os.environ["DASHBOARD_ADMIN_PASSWORD"] = "test123"
 os.environ["DASHBOARD_SECRET_KEY"] = "test-secret-key-with-32-bytes-min"
 
-import pytest
-from dashboard.database import Base, engine
 from dashboard.db_models import CategoryRunRecord
 
 
