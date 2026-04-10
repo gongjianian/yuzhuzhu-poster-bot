@@ -27,6 +27,7 @@ FIELD_CATEGORY = "\u5206\u7c7b"
 FIELD_VISUAL_STYLE = "\u6d77\u62a5\u98ce\u683c"
 FIELD_BRAND_COLORS = "\u54c1\u724c\u8272"
 FIELD_ASSET_FILENAME = "\u4ea7\u54c1\u7d20\u6750\u56fe\u6587\u4ef6\u540d"
+FIELD_PRODUCT_LINE = "\u4ea7\u54c1\u7ebf"
 FIELD_STATUS = "\u72b6\u6001"
 FIELD_IDEMPOTENCY_KEY = "\u5e42\u7b49\u952e"
 FIELD_CLOUD_FILE_ID = "\u4e91\u5b58\u50a8FileID"
@@ -82,6 +83,7 @@ def _parse_product_record(item: Any, *, default_status: str) -> ProductRecord:
         visual_style=_extract_text(fields.get(FIELD_VISUAL_STYLE)) or DEFAULT_VISUAL_STYLE,
         brand_colors=_extract_text(fields.get(FIELD_BRAND_COLORS)) or "#FFFFFF",
         asset_filename=_extract_text(fields.get(FIELD_ASSET_FILENAME)),
+        product_line=_extract_text(fields.get(FIELD_PRODUCT_LINE)) or "未知产品线",
         status=status or default_status,
         idempotency_key=_extract_text(fields.get(FIELD_IDEMPOTENCY_KEY)),
         cloud_file_id=_extract_text(fields.get(FIELD_CLOUD_FILE_ID)),

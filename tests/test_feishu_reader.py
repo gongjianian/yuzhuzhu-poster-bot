@@ -155,3 +155,32 @@ def test_update_record_status_raises_on_error(mock_build_client: Mock) -> None:
 
     with pytest.raises(RuntimeError):
         feishu_reader.update_record_status("rec_1", "FAILED_MANUAL", error_msg="bad")
+
+
+def test_parse_product_record_reads_product_line() -> None:
+    from feishu_reader import _parse_product_record
+    from unittest.mock import MagicMock
+
+    item = MagicMock()
+    item.record_id = "rec_test"
+    item.fields = {
+        "产品名称": [{"text": "鸡内金泡浴"}],
+        "产品线": [{"text": "五行泡浴"}],
+        "状态": "PENDING",
+    }
+    record = _parse_product_record(item, default_status="PENDING")
+    assert record.product_line == "五行泡浴"
+
+
+def test_parse_product_record_product_line_defaults() -> None:
+    from feishu_reader import _parse_product_record
+    from unittest.mock import MagicMock
+
+    item = MagicMock()
+    item.record_id = "rec_test"
+    item.fields = {
+        "产品名称": [{"text": "某产品"}],
+        "状态": "PENDING",
+    }
+    record = _parse_product_record(item, default_status="PENDING")
+    assert record.product_line == "未知产品线"
