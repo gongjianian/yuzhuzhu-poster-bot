@@ -137,3 +137,17 @@ def test_batch_trigger_rejects_oversized_batch():
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 400
+
+
+@patch(
+    "dashboard.routers.tasks_router.run_daily_category_pipeline",
+    new=AsyncMock(return_value=None),
+)
+def test_trigger_category_pipeline():
+    token = _get_token()
+    resp = client.post(
+        "/api/tasks/category-pipeline/trigger",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "queued"
