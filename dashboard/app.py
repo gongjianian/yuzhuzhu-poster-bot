@@ -17,12 +17,27 @@ from dashboard.database import init_db
 async def lifespan(app: FastAPI):
     init_db()
     from dashboard.websocket_manager import loguru_ws_sink, ws_manager
+    from dashboard import scheduler
 
     ws_manager.bind_loop()
     sink_id = logger.add(loguru_ws_sink, level="DEBUG")
+
+    # Recover tasks left RUNNING from a previous process (interrupt/crash/restart)
+    from dashboard.database import SessionLocal
+    from dashboard.services.category_run_service import recover_stale_running_tasks
+    _db = SessionLocal()
+    try:
+        n = recover_stale_running_tasks(_db)
+        if n:
+            logger.warning("Startup: reset {} stale RUNNING task(s) to FAILED", n)
+    finally:
+        _db.close()
+
+    scheduler.start()
     try:
         yield
     finally:
+        scheduler.stop()
         logger.remove(sink_id)
 
 

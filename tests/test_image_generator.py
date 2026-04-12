@@ -37,7 +37,7 @@ def test_generate_poster_image_returns_decoded_bytes() -> None:
     with patch("image_generator.requests.post", return_value=_make_response(200, body)) as mock_post:
         result = image_generator.generate_poster_image(
             image_prompt="Create a poster for the product",
-            product_image_b64="source-b64",
+            product_images_b64=["source-b64"],
         )
 
     assert result == image_bytes
@@ -46,8 +46,40 @@ def test_generate_poster_image_returns_decoded_bytes() -> None:
     payload = call_kwargs["json"]
     parts = payload["contents"][0]["parts"]
     assert image_generator.FUSION_RULES in parts[0]["text"]
+    assert "Variation token:" in parts[0]["text"]
     assert parts[1]["inline_data"]["data"] == "source-b64"
     assert payload["generationConfig"]["responseModalities"] == ["IMAGE", "TEXT"]
+    assert payload["generationConfig"]["temperature"] == 1.0
+
+
+def test_generate_poster_image_includes_unique_variation_directive() -> None:
+    body = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "inlineData": {
+                                "mimeType": "image/png",
+                                "data": base64.b64encode(b"ok").decode("utf-8"),
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    fake_uuid = Mock(hex="abc123efabc123efabc123efabc123ef")
+    with patch("image_generator.uuid.uuid4", return_value=fake_uuid), patch(
+        "image_generator.requests.post",
+        return_value=_make_response(200, body),
+    ) as mock_post:
+        image_generator.generate_poster_image("prompt", ["src-b64"])
+
+    prompt_text = mock_post.call_args.kwargs["json"]["contents"][0]["parts"][0]["text"]
+    assert "Variation token: abc123efabc123efabc123efabc123ef" in prompt_text
+    assert "fresh composition" in prompt_text
 
 
 def test_generate_poster_image_is_retry_wrapped() -> None:
@@ -76,7 +108,7 @@ def test_generate_poster_image_adds_image_size_for_gemini_3_pro_image_models() -
         "image_generator.requests.post",
         return_value=_make_response(200, body),
     ) as mock_post:
-        image_generator.generate_poster_image("prompt", "src-b64")
+        image_generator.generate_poster_image("prompt", ["src-b64"])
 
     payload = mock_post.call_args.kwargs["json"]
     assert payload["generationConfig"]["imageConfig"]["imageSize"] == "2K"
@@ -104,7 +136,7 @@ def test_generate_poster_image_omits_image_size_for_other_models() -> None:
         "image_generator.requests.post",
         return_value=_make_response(200, body),
     ) as mock_post:
-        image_generator.generate_poster_image("prompt", "src-b64")
+        image_generator.generate_poster_image("prompt", ["src-b64"])
 
     payload = mock_post.call_args.kwargs["json"]
     assert "imageConfig" not in payload["generationConfig"]
@@ -126,7 +158,7 @@ def test_generate_poster_image_supports_snake_case_inline_data() -> None:
     }
 
     with patch("image_generator.requests.post", return_value=_make_response(200, body)):
-        result = image_generator.generate_poster_image("prompt", "src-b64")
+        result = image_generator.generate_poster_image("prompt", ["src-b64"])
 
     assert result == image_bytes
 
@@ -137,7 +169,7 @@ def test_generate_poster_image_raises_on_http_error() -> None:
         return_value=_make_response(500, text="server error"),
     ):
         with pytest.raises(RuntimeError, match="HTTP 500"):
-            image_generator.generate_poster_image("prompt", "src-b64")
+            image_generator.generate_poster_image("prompt", ["src-b64"])
 
 
 def test_generate_poster_image_raises_when_no_image_part() -> None:
@@ -151,7 +183,7 @@ def test_generate_poster_image_raises_when_no_image_part() -> None:
         return_value=_make_response(200, body),
     ):
         with pytest.raises(ValueError, match="No image data"):
-            image_generator.generate_poster_image("prompt", "src-b64")
+            image_generator.generate_poster_image("prompt", ["src-b64"])
 
 
 def test_rate_limit_body_with_http_200_raises_rate_limit_error() -> None:
@@ -168,7 +200,7 @@ def test_rate_limit_body_with_http_200_raises_rate_limit_error() -> None:
         return_value=_make_response(200, body, text=str(body)),
     ):
         with pytest.raises(image_generator.RateLimitError, match="限流"):
-            image_generator.generate_poster_image("prompt", "src-b64")
+            image_generator.generate_poster_image("prompt", ["src-b64"])
 
 
 def test_rate_limit_http_429_raises_rate_limit_error() -> None:
@@ -178,7 +210,7 @@ def test_rate_limit_http_429_raises_rate_limit_error() -> None:
         return_value=_make_response(429, body, text=str(body)),
     ):
         with pytest.raises(image_generator.RateLimitError):
-            image_generator.generate_poster_image("prompt", "src-b64")
+            image_generator.generate_poster_image("prompt", ["src-b64"])
 
 
 def test_rate_limit_error_not_retried() -> None:
@@ -187,7 +219,7 @@ def test_rate_limit_error_not_retried() -> None:
     mock_post = Mock(return_value=_make_response(200, body, text=str(body)))
     with patch("image_generator.requests.post", mock_post):
         with pytest.raises(image_generator.RateLimitError):
-            image_generator.generate_poster_image("prompt", "src-b64")
+            image_generator.generate_poster_image("prompt", ["src-b64"])
     # Should only be called once (no retry)
     assert mock_post.call_count == 1
 

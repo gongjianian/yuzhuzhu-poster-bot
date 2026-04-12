@@ -6,7 +6,6 @@ from typing import Optional
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from loguru import logger
 
-from category_pipeline import run_daily_category_pipeline
 from dashboard.auth import get_current_user
 from dashboard.schemas import TaskListResponse, TaskResponse, TriggerResponse
 from dashboard.services.task_service import execute_single_trigger
@@ -64,24 +63,6 @@ async def batch_trigger(
         message=f"Triggered {len(record_ids)} records",
     )
 
-
-@router.post("/category-pipeline/trigger", response_model=TriggerResponse)
-async def trigger_category_pipeline(
-    current_user: str = Depends(get_current_user),
-):
-    """Trigger the daily category-based poster generation pipeline."""
-    async def run_pipeline():
-        try:
-            await run_daily_category_pipeline()
-        except Exception:
-            logger.exception("Category pipeline background run failed")
-
-    asyncio.create_task(run_pipeline())
-    return TriggerResponse(
-        run_id="category-pipeline",
-        status="queued",
-        message="Category pipeline started in background",
-    )
 
 
 @router.post("/{record_id}/trigger", response_model=TriggerResponse)

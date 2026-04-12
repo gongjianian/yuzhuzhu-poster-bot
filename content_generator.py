@@ -76,6 +76,7 @@ def generate_scheme_only(record: ProductRecord) -> dict:
         idea=record.xiaohongshu_topics or "（无特定话题，请自主发散）",
         visual_style=record.visual_style,
         brand_colors=record.brand_colors,
+        random_seed=os.urandom(4).hex()
     )
 
     resp = client.chat.completions.create(
@@ -146,6 +147,13 @@ def generate_image_prompt_only(record: ProductRecord, scheme_data: dict) -> str:
 
     selling_points = f"{record.benefits}；成分：{record.ingredients}"
 
+    body_copy_list = scheme_data.get("body_copy", [])
+    body_copy_formatted = (
+        "\n".join(f"  • {item}" for item in body_copy_list)
+        if body_copy_list
+        else "  （暂无卖点文字）"
+    )
+
     image_template = _load_prompt("image_prompt.txt")
     image_prompt_filled = image_template.format(
         store_name=STORE_NAME,
@@ -156,6 +164,7 @@ def generate_image_prompt_only(record: ProductRecord, scheme_data: dict) -> str:
         headline=scheme_copy.get("headline", ""),
         subheadline=scheme_copy.get("subheadline", ""),
         cta=scheme_copy.get("cta", ""),
+        body_copy=body_copy_formatted,
         scene_description=scene_desc,
         layout_description=layout_desc,
         visual_style=scheme_copy.get("visual_style", record.visual_style),

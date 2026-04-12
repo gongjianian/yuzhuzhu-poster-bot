@@ -4,6 +4,7 @@ import base64
 import io
 import os
 import urllib.parse
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -32,26 +33,57 @@ class RateLimitError(RuntimeError):
 load_dotenv()
 
 
-FUSION_RULES = (
-    "You will receive TWO reference images in this request:\n"
-    "  [Image 1] Product package — preserve the exact product silhouette, logo, "
-    "label text, barcode, and packaging colors. Do NOT redesign the product or "
-    "rewrite any text on it. Keep proportions unchanged. This is the authoritative "
-    "reference for the physical product.\n"
-    "  [Image 2] Brand logo (浴小主) — place this logo in the top-right corner of "
-    "the final poster. IMPORTANT LOGO RULES:\n"
-    "    • Position: top-right corner with small padding (roughly 4-6% from the "
-    "top and right edges).\n"
-    "    • Size: small and elegant, about 12-16% of the poster width.\n"
-    "    • Color: recolor the logo to a SINGLE harmonizing color that blends with "
-    "the poster background at that corner. Pick a tone that is visible but not "
-    "jarring — think of it as a subtle brand watermark, not a loud stamp. If the "
-    "background is light, use a dark muted version of the brand color; if dark, "
-    "use a soft light tint.\n"
-    "    • Preserve the logo's exact shape, all characters (浴小主), and the ® "
-    "symbol — do not rewrite or distort the text.\n"
-    "    • Do not add any extra text, box, border, or shadow around the logo.\n"
-)
+def _build_fusion_rules(product_count: int) -> str:
+    """Build image fusion rules adapted to the number of product images.
+
+    When multiple products are matched to a category, each product's real photo
+    is sent as a separate inline_data part. The prompt must tell Gemini exactly
+    which image is which so it uses all of them and doesn't hallucinate.
+    """
+    total_images = product_count + 1  # N products + 1 logo
+    parts: list[str] = [
+        f"You will receive {total_images} reference images in this request:\n"
+    ]
+
+    for i in range(1, product_count + 1):
+        label = "Product package" if product_count == 1 else f"Product package #{i}"
+        parts.append(
+            f"  [Image {i}] {label} — preserve the exact product silhouette, logo, "
+            "label text, barcode, and packaging colors. Do NOT redesign the product or "
+            "rewrite any text on it. Keep proportions unchanged. This is the authoritative "
+            "reference for the physical product.\n"
+        )
+
+    if product_count > 1:
+        parts.append(
+            f"  *** CRITICAL: ALL {product_count} product photos above MUST appear in "
+            "the poster. Use the EXACT provided images — do NOT draw, imagine, or "
+            "redesign any product. Arrange all products naturally in the composition "
+            "with each product clearly visible. ***\n"
+        )
+
+    logo_num = product_count + 1
+    parts.append(
+        f"  [Image {logo_num}] Brand logo (浴小主) — place this logo in the top-right "
+        "corner of the final poster. IMPORTANT LOGO RULES:\n"
+        "    • Position: top-right corner with small padding (roughly 4-6% from the "
+        "top and right edges).\n"
+        "    • Size: small and elegant, about 12-16% of the poster width.\n"
+        "    • Color: recolor the logo to a SINGLE harmonizing color that blends with "
+        "the poster background at that corner. Pick a tone that is visible but not "
+        "jarring — think of it as a subtle brand watermark, not a loud stamp. If the "
+        "background is light, use a dark muted version of the brand color; if dark, "
+        "use a soft light tint.\n"
+        "    • Preserve the logo's exact shape, all characters (浴小主), and the ® "
+        "symbol — do not rewrite or distort the text.\n"
+        "    • Do not add any extra text, box, border, or shadow around the logo.\n"
+    )
+
+    return "".join(parts)
+
+
+# Keep a constant for tests and backward compatibility with single-product pipeline
+FUSION_RULES = _build_fusion_rules(1)
 
 
 # ---------- Logo loading ----------
@@ -1041,33 +1073,91 @@ def _image_size_config(model: str) -> dict:
     return {"imageConfig": {"imageSize": "2K", "aspectRatio": "3:4"}}
 
 
+_COMPOSITION_VARIANTS = (
+    "hero-centered still life with strong foreground/background separation",
+    "editorial magazine composition with generous negative space",
+    "three-quarter camera angle with layered props and visible depth",
+    "close-to-mid shot composition with the products grouped asymmetrically",
+)
+
+_ATMOSPHERE_VARIANTS = (
+    "warm herbal healing atmosphere with steam and soft botanical textures",
+    "clean premium skincare atmosphere with airy gradients and crisp surfaces",
+    "gentle home-care atmosphere with tactile natural materials and calm depth",
+    "poetic therapeutic atmosphere with subtle mist, fibers, and ambient glow",
+)
+
+_LIGHTING_VARIANTS = (
+    "soft side lighting with a bright focal falloff",
+    "diffused window light with delicate rim highlights",
+    "cinematic warm light with a calmer shadow side",
+    "morning natural light with translucent haze and soft reflections",
+)
+
+
+def _resolve_image_temperature() -> float:
+    raw = os.getenv("GEMINI_IMAGE_TEMPERATURE", "1.0").strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid GEMINI_IMAGE_TEMPERATURE='{}', falling back to 1.0",
+            raw,
+        )
+        return 1.0
+    return max(0.0, min(2.0, value))
+
+
+def _build_variation_directive() -> str:
+    token = uuid.uuid4().hex
+    token_int = int(token[:8], 16)
+    composition = _COMPOSITION_VARIANTS[token_int % len(_COMPOSITION_VARIANTS)]
+    atmosphere = _ATMOSPHERE_VARIANTS[(token_int >> 3) % len(_ATMOSPHERE_VARIANTS)]
+    lighting = _LIGHTING_VARIANTS[(token_int >> 6) % len(_LIGHTING_VARIANTS)]
+    return (
+        "Fresh render directive for this request:\n"
+        "- Treat this as a fresh composition, not a remake of any previous poster.\n"
+        f"- Variation token: {token}\n"
+        f"- Composition emphasis: {composition}.\n"
+        f"- Atmosphere emphasis: {atmosphere}.\n"
+        f"- Lighting emphasis: {lighting}.\n"
+        "- Preserve the exact supplied product packaging and logo, but vary the "
+        "scene layout, framing, background structure, props, and negative space.\n"
+    )
+
+
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=2, min=5, max=60),
     retry=retry_if_not_exception_type(RateLimitError),
     reraise=True,
 )
-def generate_poster_image(image_prompt: str, product_image_b64: str) -> bytes:
+def generate_poster_image(image_prompt: str, product_images_b64: list[str]) -> bytes:
     """Generate a poster image using Gemini's native generateContent API.
 
     The OpenAI-compatible chat.completions endpoint silently returns content=null
     for image generation models on this proxy, so we use the native Gemini format
     which returns inline_data parts containing the image bytes.
+
+    product_images_b64: one or more base64-encoded product images. When multiple
+    products are matched to a category, all images are included so Gemini can
+    fuse them naturally into a single composition.
     """
     model = _resolve_image_model()
     api_key = os.getenv("GEMINI_API_KEY", "")
-    prompt = f"{image_prompt}\n\n{FUSION_RULES}"
+    fusion_rules = _build_fusion_rules(len(product_images_b64))
+    variation_directive = _build_variation_directive()
+    prompt = f"{image_prompt}\n\n{fusion_rules}\n\n{variation_directive}"
 
-    # Build parts: prompt text + product image (Image 1) + optional logo (Image 2)
-    parts: list[dict] = [
-        {"text": prompt},
-        {
+    # Build parts: prompt text + one inline_data per product + optional logo
+    parts: list[dict] = [{"text": prompt}]
+    for img_b64 in product_images_b64:
+        parts.append({
             "inline_data": {
                 "mime_type": "image/png",
-                "data": product_image_b64,
+                "data": img_b64,
             }
-        },
-    ]
+        })
 
     logo_b64 = _load_logo_b64()
     if logo_b64:
@@ -1082,6 +1172,7 @@ def generate_poster_image(image_prompt: str, product_image_b64: str) -> bytes:
         "contents": [{"role": "user", "parts": parts}],
         "generationConfig": {
             "responseModalities": ["IMAGE", "TEXT"],
+            "temperature": _resolve_image_temperature(),
             **_image_size_config(model),
         },
     }

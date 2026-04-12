@@ -91,6 +91,7 @@ def generate_category_poster_content(task: CategoryPosterTask) -> PosterScheme:
         symptoms=category.get("symptoms", ""),
         product_line=task.product_line,
         product_details=_format_product_details(task),
+        random_seed=os.urandom(4).hex(),
     )
 
     resp = client.chat.completions.create(

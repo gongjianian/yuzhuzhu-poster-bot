@@ -108,7 +108,7 @@ class CategoryTaskItem(BaseModel):
     category_name: str
     level1_name: str
     product_line: str
-    products: list[str]
+    products: list  # list[str] (legacy) or list[dict] (new full product info)
     status: str
     step: str
     headline: str
@@ -116,6 +116,7 @@ class CategoryTaskItem(BaseModel):
     material_id: str
     error_msg: str
     duration_seconds: Optional[float]
+    scheduled_at: Optional[str] = None
     started_at: Optional[str]
     finished_at: Optional[str]
 
@@ -133,7 +134,29 @@ class CategoryBatchSummary(BaseModel):
     done: int
     failed: int
     running: int
+    scheduled: int = 0
 
 
 class CategoryBatchListResponse(BaseModel):
     items: list[CategoryBatchSummary]
+
+
+class CategorySlotItem(BaseModel):
+    """One category time-slot in today's schedule."""
+    category_id: str
+    category_name: str
+    level1_name: str
+    scheduled_at: Optional[str]
+    slot_status: str  # SCHEDULED | RUNNING | DONE | FAILED | PARTIAL
+    tasks: list[CategoryTaskItem]
+    done_count: int
+    failed_count: int
+    total_count: int
+
+
+class TodayScheduleResponse(BaseModel):
+    batch_id: str
+    date: str
+    total_slots: int
+    done_slots: int
+    slots: list[CategorySlotItem]

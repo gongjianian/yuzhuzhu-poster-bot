@@ -58,5 +58,6 @@ class CategoryRunRecord(Base):
     material_id: Mapped[str] = mapped_column(String(200), default="")
     error_msg: Mapped[str] = mapped_column(Text, default="")
     duration_seconds: Mapped[float] = mapped_column(Float, nullable=True)
+    scheduled_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     finished_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)

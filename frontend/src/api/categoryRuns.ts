@@ -1,5 +1,9 @@
 import request from './request'
 
+export function getToday() {
+  return request.get('/category-runs/today')
+}
+
 export function getCurrent() {
   return request.get('/category-runs/current')
 }

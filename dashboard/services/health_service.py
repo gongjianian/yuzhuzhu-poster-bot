@@ -50,11 +50,16 @@ def check_feishu() -> dict:
 def check_gemini() -> dict:
     try:
         start = time.time()
-        base_url = os.getenv("GEMINI_API_BASE", "https://api.buxianliang.fun/v1")
+        base_url = os.getenv(
+            "GEMINI_API_BASE", "https://generativelanguage.googleapis.com/v1beta/openai/"
+        ).rstrip("/")
         response = requests.get(
             f"{base_url}/models",
-            timeout=10,
-            headers={"Authorization": f"Bearer {os.getenv('GEMINI_API_KEY', '')}"},
+            timeout=15,
+            headers={
+                "Authorization": f"Bearer {os.getenv('GEMINI_API_KEY', '')}",
+                "x-goog-api-key": os.getenv("GEMINI_API_KEY", ""),
+            },
         )
         latency = (time.time() - start) * 1000
         status = "ok" if response.status_code == 200 else "error"

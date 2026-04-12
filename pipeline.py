@@ -14,11 +14,7 @@ from loguru import logger
 from asset_processor import process_product_image
 from content_generator import generate_poster_content
 from feishu_reader import fetch_pending_records, update_record_status
-from image_generator import (
-    analyze_layout_with_vision,
-    apply_layout,
-    generate_poster_image,
-)
+from image_generator import generate_poster_image
 from qc_checker import check_poster_quality
 from wechat_uploader import build_cloud_path, upload_image
 
@@ -115,30 +111,8 @@ async def process_single_product(record, trigger_type: str = "cron") -> dict:
             poster_bytes = await asyncio.to_thread(
                 generate_poster_image,
                 poster_scheme.image_prompt + qc_prompt_suffix,
-                product_b64,
+                [product_b64],
             )
-            # Post-process: let vision AI design a full PIL layout
-            # based on the actual generated image, then render it.
-            # The AI sees the real poster and decides where text should
-            # go, what backgrounds/accents to use, and which colors fit.
-            if poster_scheme.body_copy:
-                heading = (
-                    poster_scheme.small_text_zone.heading
-                    if poster_scheme.small_text_zone
-                    else ""
-                )
-                layout_spec = await asyncio.to_thread(
-                    analyze_layout_with_vision,
-                    poster_bytes,
-                    poster_scheme.body_copy,
-                    heading,
-                    poster_scheme.small_text_zone,  # fallback hint
-                )
-                poster_bytes = await asyncio.to_thread(
-                    apply_layout,
-                    poster_bytes,
-                    layout_spec,
-                )
             result["stage"] = "IMAGE_OK"
             await _safe_update_status(record.record_id, "IMAGE_OK")
 
